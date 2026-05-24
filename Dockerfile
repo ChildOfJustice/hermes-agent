@@ -79,6 +79,7 @@ RUN npm install --prefer-offline --no-audit && \
 COPY pyproject.toml uv.lock ./
 RUN touch ./README.md
 RUN uv sync --frozen --no-install-project --extra all --extra messaging
+RUN uv pip install ddgs
 
 # ---------- Source code ----------
 # .dockerignore excludes node_modules, so the installs above survive.
