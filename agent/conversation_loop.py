@@ -63,6 +63,7 @@ from agent.nous_rate_guard import (
 from agent.process_bootstrap import _install_safe_stdio
 from agent.prompt_caching import apply_anthropic_cache_control
 from agent.retry_utils import jittered_backoff
+from agent.metrics_writer import write_llm_call_metric
 from agent.trajectory import has_incomplete_scratchpad
 from agent.usage_pricing import estimate_usage_cost, normalize_usage
 from hermes_constants import display_hermes_home as _dhh_fn
@@ -1722,7 +1723,32 @@ def run_conversation(
                             f"{cached:,}/{prompt:,} tokens "
                             f"({hit_pct:.0f}% hit, {written:,} written)"
                         )
-                
+
+                    # --- Metrics export (token_usage.jsonl) ---
+                    # Fire-and-forget: any IOError inside is silently swallowed.
+                    # _ext_prefetch_cache is the MemPalace string injected before
+                    # this call; its length tells us how much context memory used.
+                    try:
+                        write_llm_call_metric(
+                            session_id=agent.session_id or "",
+                            turn=agent._user_turn_count,
+                            model=agent.model or "",
+                            provider=agent.provider or "",
+                            input_tokens=canonical_usage.input_tokens,
+                            output_tokens=canonical_usage.output_tokens,
+                            cache_read_tokens=canonical_usage.cache_read_tokens,
+                            cache_write_tokens=canonical_usage.cache_write_tokens,
+                            reasoning_tokens=canonical_usage.reasoning_tokens,
+                            estimated_cost_usd=float(cost_result.amount_usd)
+                                if cost_result.amount_usd is not None else None,
+                            cost_status=cost_result.status,
+                            memory_context_chars=len(_ext_prefetch_cache),
+                            tool_call_count=api_call_count,
+                            finish_reason=finish_reason,
+                        )
+                    except Exception:
+                        pass  # metrics must never crash the agent
+
                 has_retried_429 = False  # Reset on success
                 # Clear Nous rate limit state on successful request —
                 # proves the limit has reset and other sessions can
