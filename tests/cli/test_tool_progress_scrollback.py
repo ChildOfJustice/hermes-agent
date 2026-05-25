@@ -1,8 +1,10 @@
 """Tests for stacked tool progress scrollback lines in the CLI TUI.
 
-When tool_progress_mode is "all" or "new", _on_tool_progress should print
-persistent lines to scrollback on tool.completed, restoring the stacked
-tool history that was lost when the TUI switched to a single-line spinner.
+When tool_progress_mode is "all", "new", or "verbose", _on_tool_progress
+should print persistent lines to scrollback on tool.completed, restoring
+the stacked tool history that was lost when the TUI switched to a single-line
+spinner.  "verbose" was added in fix(display): persist tool scrollback lines
+in verbose mode (09f290616) to fix the disappearing tool-usage summary bug.
 """
 
 import os
@@ -159,14 +161,19 @@ class TestToolProgressScrollback:
 
         assert mock_print.call_count == 2
 
-    def test_verbose_mode_no_duplicate_scrollback(self):
-        """In 'verbose' mode, scrollback lines are NOT printed (run_agent handles verbose output)."""
+    def test_verbose_mode_prints_scrollback(self):
+        """In 'verbose' mode, scrollback lines ARE printed (fix for disappearing tool-usage summary).
+
+        Before 09f290616, verbose mode fell through the scrollback guard so tool
+        completion lines only lived in the prompt_toolkit spinner widget (which is
+        erased when the turn ends).  The fix adds 'verbose' to the scrollback set.
+        """
         cli = _make_cli(tool_progress="verbose")
         with patch.object(_cli_mod, "_cprint") as mock_print:
             cli._on_tool_progress("tool.started", "terminal", "ls", {"command": "ls"})
             cli._on_tool_progress("tool.completed", "terminal", None, None, duration=0.5, is_error=False)
 
-        mock_print.assert_not_called()
+        mock_print.assert_called_once()
 
     def test_pending_info_stores_on_started(self):
         """tool.started stores args for later use by tool.completed."""
