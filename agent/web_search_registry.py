@@ -43,6 +43,19 @@ logger = logging.getLogger(__name__)
 
 _providers: Dict[str, WebSearchProvider] = {}
 _lock = threading.Lock()
+_BACKEND_ALIASES = {
+    "duckduckgo": "ddgs",
+    "duck-duck-go": "ddgs",
+    "duck_duck_go": "ddgs",
+    "ddg": "ddgs",
+}
+
+
+def _normalize_provider_name(name: str) -> str:
+    if not isinstance(name, str):
+        return ""
+    normalized = name.strip().lower()
+    return _BACKEND_ALIASES.get(normalized, normalized)
 
 
 def register_provider(provider: WebSearchProvider) -> None:
@@ -87,7 +100,7 @@ def get_provider(name: str) -> Optional[WebSearchProvider]:
     if not isinstance(name, str):
         return None
     with _lock:
-        return _providers.get(name.strip())
+        return _providers.get(_normalize_provider_name(name))
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +120,7 @@ def _read_config_key(*path: str) -> Optional[str]:
                 return None
             cur = cur.get(segment)
         if isinstance(cur, str) and cur.strip():
-            return cur.strip()
+            return _normalize_provider_name(cur)
     except Exception as exc:
         logger.debug("Could not read config %s: %s", ".".join(path), exc)
     return None

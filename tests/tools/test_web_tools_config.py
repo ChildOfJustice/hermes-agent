@@ -508,6 +508,34 @@ class TestWebSearchSchema:
         assert result == {"success": True, "data": {"web": []}}
         fake_search.assert_called_once_with("docs", 100)
 
+    def test_web_search_accepts_duckduckgo_alias_for_ddgs(self, monkeypatch):
+        import tools.web_tools
+
+        fake_search = MagicMock(return_value={"success": True, "data": {"web": []}})
+        fake_provider = MagicMock(
+            name="DDGSWebSearchProvider",
+            supports_search=MagicMock(return_value=True),
+            is_available=MagicMock(return_value=True),
+        )
+        fake_provider.search = fake_search
+        fake_provider.name = "ddgs"
+
+        monkeypatch.setattr(
+            tools.web_tools,
+            "_load_web_config",
+            lambda: {"backend": "duckduckgo", "search_backend": "duckduckgo"},
+        )
+        monkeypatch.setattr(tools.web_tools, "_ddgs_package_importable", lambda: True)
+
+        with patch("agent.web_search_registry.get_provider", return_value=fake_provider), \
+             patch("tools.interrupt.is_interrupted", return_value=False), \
+             patch.object(tools.web_tools._debug, "log_call"), \
+             patch.object(tools.web_tools._debug, "save"):
+            result = json.loads(tools.web_tools.web_search_tool("docs", limit=3))
+
+        assert result == {"success": True, "data": {"web": []}}
+        fake_search.assert_called_once_with("docs", 3)
+
 
 class TestWebSearchErrorHandling:
     """Test suite for web_search_tool() error responses."""
@@ -543,6 +571,35 @@ class TestWebSearchErrorHandling:
         assert "exception_type" not in result
         assert "exception_chain" not in result
         assert "traceback" not in result
+
+    def test_search_error_response_exposes_diagnostics_when_verbose(self, monkeypatch):
+        import tools.web_tools
+
+        fake_provider = MagicMock(
+            name="DDGSWebSearchProvider",
+            supports_search=MagicMock(return_value=True),
+            is_available=MagicMock(return_value=True),
+        )
+        fake_provider.search.side_effect = RuntimeError("rate limited 202")
+        fake_provider.name = "ddgs"
+        monkeypatch.setattr(
+            tools.web_tools,
+            "_load_web_config",
+            lambda: {"backend": "ddgs", "search_backend": "ddgs", "verbose_errors": True},
+        )
+
+        with patch("agent.web_search_registry.get_provider", return_value=fake_provider), \
+             patch("tools.interrupt.is_interrupted", return_value=False), \
+             patch.object(tools.web_tools._debug, "log_call"), \
+             patch.object(tools.web_tools._debug, "save"):
+            result = json.loads(tools.web_tools.web_search_tool("test query", limit=3))
+
+        assert result["success"] is False
+        assert result["error"] == "Error searching web: rate limited 202"
+        assert result["diagnostics"]["configured_backend"] == "ddgs"
+        assert result["diagnostics"]["resolved_provider"] == "ddgs"
+        assert result["diagnostics"]["exception_type"] == "RuntimeError"
+        assert "RuntimeError: rate limited 202" in result["diagnostics"]["traceback"]
 
 
 class TestCheckWebApiKey:

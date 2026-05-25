@@ -45,6 +45,7 @@ import logging
 import os
 import re
 import asyncio
+import traceback
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
 import httpx  # noqa: F401 — kept at module top so tests can patch tools.web_tools.httpx
 # After the web-provider plugin migration (PR #25182), the Firecrawl SDK
@@ -120,6 +121,22 @@ logger = logging.getLogger(__name__)
 
 # ─── Backend Selection ────────────────────────────────────────────────────────
 
+_WEB_BACKEND_ALIASES = {
+    "duckduckgo": "ddgs",
+    "duck-duck-go": "ddgs",
+    "duck_duck_go": "ddgs",
+    "ddg": "ddgs",
+}
+
+
+def _normalize_web_backend_name(value: Any) -> str:
+    """Return the canonical web backend id for config/env-provided names."""
+    if not isinstance(value, str):
+        return ""
+    normalized = value.lower().strip()
+    return _WEB_BACKEND_ALIASES.get(normalized, normalized)
+
+
 def _has_env(name: str) -> bool:
     val = os.getenv(name)
     return bool(val and val.strip())
@@ -139,7 +156,7 @@ def _get_backend() -> str:
     Falls back to whichever API key is present for users who configured
     keys manually without running setup.
     """
-    configured = (_load_web_config().get("backend") or "").lower().strip()
+    configured = _normalize_web_backend_name(_load_web_config().get("backend"))
     if configured in {"parallel", "firecrawl", "tavily", "exa", "searxng", "brave-free", "ddgs", "xai"}:
         return configured
 
@@ -196,10 +213,22 @@ def _get_capability_backend(capability: str) -> str:
     uses it. Otherwise falls through to the shared ``_get_backend()``.
     """
     cfg = _load_web_config()
-    specific = (cfg.get(f"{capability}_backend") or "").lower().strip()
+    specific = _normalize_web_backend_name(cfg.get(f"{capability}_backend"))
     if specific and _is_backend_available(specific):
         return specific
     return _get_backend()
+
+
+def _web_verbose_errors_enabled() -> bool:
+    """Return True when web tools should expose diagnostic error details."""
+    env_value = os.getenv("WEB_TOOLS_VERBOSE_ERRORS", "")
+    if env_value.strip().lower() in {"1", "true", "yes", "on", "debug", "verbose"}:
+        return True
+    try:
+        cfg = _load_web_config()
+        return bool(cfg.get("verbose_errors") or cfg.get("debug_errors"))
+    except Exception:
+        return False
 
 
 def _is_backend_available(backend: str) -> bool:
@@ -788,6 +817,8 @@ def web_search_tool(query: str, limit: int = 5) -> str:
             "query": query,
             "limit": limit
         },
+        "configured_backend": None,
+        "resolved_provider": None,
         "error": None,
         "results_count": 0,
         "original_response_size": 0,
@@ -809,6 +840,8 @@ def web_search_tool(query: str, limit: int = 5) -> str:
         )
 
         backend = _get_search_backend()
+        verbose_errors = _web_verbose_errors_enabled()
+        debug_call_data["configured_backend"] = backend
         provider = _wsp_get_provider(backend) if backend else None
         if provider is None or not provider.supports_search():
             # Fall back to availability-walked active provider when the
@@ -824,12 +857,38 @@ def web_search_tool(query: str, limit: int = 5) -> str:
                     "Run `hermes tools` to set one up."
                 ),
             }
+            if verbose_errors:
+                response_data["diagnostics"] = {
+                    "configured_backend": backend,
+                    "provider": None,
+                    "provider_available": None,
+                }
         else:
+            provider_available = None
+            try:
+                provider_available = bool(provider.is_available())
+            except Exception as availability_error:  # noqa: BLE001
+                provider_available = False
+                logger.debug(
+                    "Web provider %s availability check failed: %s",
+                    provider.name, availability_error,
+                )
+            debug_call_data["resolved_provider"] = provider.name
             logger.info(
                 "Web search via %s: '%s' (limit: %d)",
                 provider.name, query, limit,
             )
             response_data = provider.search(query, limit)
+            if verbose_errors and isinstance(response_data, dict) and response_data.get("success") is False:
+                response_data.setdefault("diagnostics", {})
+                response_data["diagnostics"].update(
+                    {
+                        "configured_backend": backend,
+                        "provider": provider.name,
+                        "provider_available": provider_available,
+                        "provider_class": type(provider).__name__,
+                    }
+                )
 
         debug_call_data["results_count"] = len(response_data.get("data", {}).get("web", []))
         result_json = json.dumps(response_data, indent=2, ensure_ascii=False)
@@ -840,12 +899,25 @@ def web_search_tool(query: str, limit: int = 5) -> str:
 
     except Exception as e:
         error_msg = f"Error searching web: {str(e)}"
-        logger.debug("%s", error_msg)
+        logger.exception("%s", error_msg)
 
         debug_call_data["error"] = error_msg
+        debug_call_data["exception_type"] = type(e).__name__
+        debug_call_data["traceback"] = traceback.format_exc()
         _debug.log_call("web_search_tool", debug_call_data)
         _debug.save()
 
+        if _web_verbose_errors_enabled():
+            return tool_error(
+                error_msg,
+                success=False,
+                diagnostics={
+                    "configured_backend": debug_call_data.get("configured_backend"),
+                    "resolved_provider": debug_call_data.get("resolved_provider"),
+                    "exception_type": type(e).__name__,
+                    "traceback": traceback.format_exc(),
+                },
+            )
         return tool_error(error_msg)
 
 

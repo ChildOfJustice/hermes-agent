@@ -673,6 +673,7 @@ DEFAULT_CONFIG = {
         "backend": "",           # shared fallback — applies to both search and extract
         "search_backend": "",    # per-capability override for web_search (e.g. "searxng")
         "extract_backend": "",   # per-capability override for web_extract (e.g. "native")
+        "verbose_errors": False, # include provider diagnostics in web tool error results
     },
 
     "browser": {
