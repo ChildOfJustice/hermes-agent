@@ -572,20 +572,17 @@ class KawaiiSpinner:
     }
 
     KAWAII_WAITING = [
-        "(｡◕‿◕｡)", "(◕‿◕✿)", "٩(◕‿◕｡)۶", "(✿◠‿◠)", "( ˘▽˘)っ",
-        "♪(´ε` )", "(◕ᴗ◕✿)", "ヾ(＾∇＾)", "(≧◡≦)", "(★ω★)",
+        "_◢🔘◤‾‾", "_◢🔘◤‾‾", "_◢🔘◤‾‾", "_◢🔘◤‾‾", "_◢🔘◤‾‾",
     ]
 
     KAWAII_THINKING = [
-        "(｡•́︿•̀｡)", "(◔_◔)", "(¬‿¬)", "( •_•)>⌐■-■", "(⌐■_■)",
-        "(´･_･`)", "◉_◉", "(°ロ°)", "( ˘⌣˘)♡", "ヽ(>∀<☆)☆",
-        "٩(๑❛ᴗ❛๑)۶", "(⊙_⊙)", "(¬_¬)", "( ͡° ͜ʖ ͡°)", "ಠ_ಠ",
+        "_◢🔘◤‾‾", "_◢🔘◤‾‾", "_◢🔘◤‾‾", "_◢🔘◤‾‾", "_◢🔘◤‾‾",
     ]
 
     THINKING_VERBS = [
-        "pondering", "contemplating", "musing", "cogitating", "ruminating",
-        "deliberating", "mulling", "reflecting", "processing", "reasoning",
-        "analyzing", "computing", "synthesizing", "formulating", "brainstorming",
+        "processing", "executing", "running", "computing", "operating",
+        "dispatching", "scanning", "resolving", "synthesizing", "evaluating",
+        "analyzing", "planning", "routing", "preparing", "deliberating",
     ]
 
     @classmethod

@@ -196,6 +196,70 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
         },
         "tool_prefix": "┊",
     },
+    "deepblue": {
+        "name": "deepblue",
+        "description": "Deep dark blue — abyss palette with operation-glyph spinner",
+        "colors": {
+            # Deep dark blue palette. Anchor: midnight navy (#0B1F3A) with
+            # a cobalt accent (#3C6FE0) on cream-tinted ice text (#DCE6F5).
+            "banner_border": "#1E3A6A",
+            "banner_title": "#5B8BE6",
+            "banner_accent": "#3C6FE0",
+            "banner_dim": "#365279",
+            "banner_text": "#DCE6F5",
+            "ui_accent": "#3C6FE0",
+            "ui_label": "#7FA6E8",
+            "ui_ok": "#4caf50",
+            "ui_error": "#ef5350",
+            "ui_warn": "#ffa726",
+            "prompt": "#DCE6F5",
+            "input_rule": "#1E3A6A",
+            "response_border": "#5B8BE6",
+            "status_bar_bg": "#0B1F3A",
+            "status_bar_text": "#C8D6EE",
+            "status_bar_strong": "#5B8BE6",
+            "status_bar_dim": "#365279",
+            "status_bar_good": "#7BC96F",
+            "status_bar_warn": "#5B8BE6",
+            "status_bar_bad": "#FFA726",
+            "status_bar_critical": "#FF6B6B",
+            "session_label": "#7FA6E8",
+            "session_border": "#365279",
+            "selection_bg": "#1A2F55",
+            "completion_menu_bg": "#0B1F3A",
+            "completion_menu_current_bg": "#1A2F55",
+            "completion_menu_meta_bg": "#0B1F3A",
+            "completion_menu_meta_current_bg": "#1A2F55",
+            "voice_status_bg": "#0B1F3A",
+        },
+        "spinner": {
+            # Single operation glyph — same frame for waiting and thinking.
+            # Repeating the entry keeps the rotation loop happy without
+            # introducing a second visual.  The trailing `‾‾` evokes a
+            # progress bar; the `◢🔘◤` core reads as a reticle / port.
+            "waiting_faces": ["_◢🔘◤‾‾", "_◢🔘◤‾‾", "_◢🔘◤‾‾"],
+            "thinking_faces": ["_◢🔘◤‾‾", "_◢🔘◤‾‾", "_◢🔘◤‾‾"],
+            "thinking_verbs": [
+                "processing", "executing", "running",
+                "computing", "operating", "dispatching",
+                "scanning", "resolving", "synthesizing",
+            ],
+            "wings": [
+                ["⟪◢", "◤⟫"],
+                ["⟪▣", "▣⟫"],
+                ["⟪◉", "◉⟫"],
+            ],
+        },
+        "branding": {
+            "agent_name": "Hermes Agent",
+            "welcome": "Welcome to Hermes Agent (deepblue). Type your message or /help for commands.",
+            "goodbye": "Standing down. ◉",
+            "response_label": " ◉ Hermes ",
+            "prompt_symbol": "❯",
+            "help_header": "(◉) Available Commands",
+        },
+        "tool_prefix": "┊",
+    },
     "ares": {
         "name": "ares",
         "description": "War-god theme — crimson and bronze",
