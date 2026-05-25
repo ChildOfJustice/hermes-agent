@@ -211,7 +211,7 @@ class TestMemoryManager:
         mgr.add_provider(p1)
         mgr.add_provider(p2)
 
-        result = mgr.prefetch_all("query")
+        result = mgr.prefetch_all("what is the query?")
         assert result == "Has memories"
 
     def test_queue_prefetch_all(self):
@@ -221,9 +221,9 @@ class TestMemoryManager:
         mgr.add_provider(p1)
         mgr.add_provider(p2)
 
-        mgr.queue_prefetch_all("next turn")
-        assert p1.queued_prefetches == ["next turn"]
-        assert p2.queued_prefetches == ["next turn"]
+        mgr.queue_prefetch_all("next turn warm-up")
+        assert p1.queued_prefetches == ["next turn warm-up"]
+        assert p2.queued_prefetches == ["next turn warm-up"]
 
     def test_sync_all(self):
         mgr = MemoryManager()
@@ -363,7 +363,7 @@ class TestMemoryManager:
         mgr.add_provider(p1)
         mgr.add_provider(p2)
 
-        result = mgr.prefetch_all("query")
+        result = mgr.prefetch_all("what is the query?")
         assert "external memory" in result
 
     def test_system_prompt_failure_doesnt_block(self):
@@ -1248,3 +1248,148 @@ class TestContextEngineToolsetGate:
         """Gate is moot without a context_compressor."""
         tools, names, engine_names = self._run_context_engine_injection(None, None)
         assert tools == []
+
+
+# ---------------------------------------------------------------------------
+# Prefetch gating — skip semantic recall for ack/continuation messages.
+# Lives in memory_manager.should_prefetch(); both prefetch_all and
+# queue_prefetch_all consult it.
+# ---------------------------------------------------------------------------
+
+
+class TestPrefetchGate:
+    """Verify the should_prefetch() heuristic and its integration with
+    prefetch_all / queue_prefetch_all on MemoryManager."""
+
+    def setup_method(self):
+        # Clean slate per test — the gate reads env on every call.
+        import os
+        for key in ("HERMES_PREFETCH_GATE", "HERMES_PREFETCH_MIN_QUERY_CHARS"):
+            os.environ.pop(key, None)
+
+    # --- should_prefetch heuristic --------------------------------------
+
+    @pytest.mark.parametrize("msg", [
+        "ok", "okay", "yes", "yeah", "thanks", "thx", "continue", "go",
+        "done", "lgtm", "hi", "hello", "Sure.", "  ok  ", "Continue!",
+        "OK", "Yes!", "great",
+    ])
+    def test_skips_single_word_acks(self, msg):
+        from agent.memory_manager import should_prefetch
+        assert should_prefetch(msg) is False
+
+    @pytest.mark.parametrize("msg", [
+        "go ahead", "sounds good", "lets do it", "let's go", "got it",
+        "thank you", "makes sense", "do that",
+    ])
+    def test_skips_ack_phrases(self, msg):
+        from agent.memory_manager import should_prefetch
+        assert should_prefetch(msg) is False
+
+    @pytest.mark.parametrize("msg", [
+        "why?",                          # short but interrogative
+        "where are the logs?",
+        "what changed in the build?",
+        "How do I run tests?",
+        "?",                              # punctuation-only edge
+    ])
+    def test_keeps_questions(self, msg):
+        from agent.memory_manager import should_prefetch
+        assert should_prefetch(msg) is True
+
+    @pytest.mark.parametrize("msg", [
+        "fix that bug too",
+        "and the other one",
+        "do it again",
+        "same as before",
+        "use this",
+    ])
+    def test_keeps_referential_short_messages(self, msg):
+        from agent.memory_manager import should_prefetch
+        assert should_prefetch(msg) is True
+
+    @pytest.mark.parametrize("msg", [
+        "refactor the prefetch gate to use a config dict instead",
+        "Please update the README env-var table accordingly.",
+        "implement option B from the design doc",
+    ])
+    def test_keeps_long_messages(self, msg):
+        from agent.memory_manager import should_prefetch
+        assert should_prefetch(msg) is True
+
+    def test_skips_empty_and_whitespace(self):
+        from agent.memory_manager import should_prefetch
+        assert should_prefetch("") is False
+        assert should_prefetch("   \n\t  ") is False
+
+    def test_skips_punctuation_only(self):
+        from agent.memory_manager import should_prefetch
+        assert should_prefetch("...") is False
+        assert should_prefetch("!!!") is False
+
+    def test_non_string_query_does_not_crash(self):
+        from agent.memory_manager import should_prefetch
+        # Defensive: callers occasionally pass None / int. Don't break the turn.
+        assert should_prefetch(None) is True  # unknown → conservative pass
+        assert should_prefetch(123) is True
+
+    # --- env-var overrides ----------------------------------------------
+
+    def test_master_switch_disables_gate(self, monkeypatch):
+        from agent.memory_manager import should_prefetch
+        monkeypatch.setenv("HERMES_PREFETCH_GATE", "false")
+        # Even "ok" — clearly an ack — passes through when gate is disabled.
+        assert should_prefetch("ok") is True
+        assert should_prefetch("") is True  # the only exception is `None`-equivalent
+
+    def test_min_chars_env_override(self, monkeypatch):
+        from agent.memory_manager import should_prefetch
+        # Raise the floor — "logs" (4 chars) still skipped, "redeploy" (8 chars)
+        # now skipped, "redeploy now" (12 chars) passes.
+        monkeypatch.setenv("HERMES_PREFETCH_MIN_QUERY_CHARS", "12")
+        assert should_prefetch("logs") is False
+        assert should_prefetch("redeploy") is False
+        assert should_prefetch("redeploy now!") is True
+
+    def test_invalid_min_chars_falls_back_to_default(self, monkeypatch):
+        from agent.memory_manager import should_prefetch
+        monkeypatch.setenv("HERMES_PREFETCH_MIN_QUERY_CHARS", "not-a-number")
+        # Falls back to default 12. "abc" (3 chars) skipped.
+        assert should_prefetch("abc") is False
+
+    # --- integration with manager ---------------------------------------
+
+    def test_prefetch_all_skips_ack_messages(self):
+        mgr = MemoryManager()
+        p = FakeMemoryProvider("test")
+        p._prefetch_result = "this should never appear"
+        mgr.add_provider(p)
+        result = mgr.prefetch_all("ok")
+        assert result == ""
+        assert p.prefetch_queries == []  # provider never called
+
+    def test_queue_prefetch_all_skips_ack_messages(self):
+        mgr = MemoryManager()
+        p = FakeMemoryProvider("test")
+        mgr.add_provider(p)
+        mgr.queue_prefetch_all("thanks")
+        assert p.queued_prefetches == []  # provider never queued
+
+    def test_prefetch_all_still_runs_for_real_queries(self):
+        mgr = MemoryManager()
+        p = FakeMemoryProvider("test")
+        p._prefetch_result = "recalled context"
+        mgr.add_provider(p)
+        result = mgr.prefetch_all("where did we leave the auth refactor?")
+        assert "recalled context" in result
+        assert p.prefetch_queries == ["where did we leave the auth refactor?"]
+
+    def test_master_switch_restores_unconditional_prefetch(self, monkeypatch):
+        monkeypatch.setenv("HERMES_PREFETCH_GATE", "false")
+        mgr = MemoryManager()
+        p = FakeMemoryProvider("test")
+        p._prefetch_result = "recalled"
+        mgr.add_provider(p)
+        result = mgr.prefetch_all("ok")
+        assert "recalled" in result
+        assert p.prefetch_queries == ["ok"]

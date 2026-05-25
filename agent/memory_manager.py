@@ -26,6 +26,7 @@ Usage in run_agent.py:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import inspect
 from typing import Any, Dict, List, Optional
@@ -34,6 +35,111 @@ from agent.memory_provider import MemoryProvider
 from tools.registry import tool_error
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Prefetch gating
+# ---------------------------------------------------------------------------
+#
+# Skip semantic prefetch for messages where it has near-zero chance of
+# helping: short acknowledgements, continuations, and one-word commands
+# that don't reference past context. Keeps real questions (any "?"),
+# context-referential messages ("that bug", "the other issue"), and
+# anything long enough to plausibly be a real query.
+#
+# Tunable via env:
+#   HERMES_PREFETCH_GATE             — "true"/"false" (default true). Master switch.
+#   HERMES_PREFETCH_MIN_QUERY_CHARS  — int (default 12). Below this AND no signal → skip.
+#
+# Design notes:
+# - We're conservative: when in doubt, prefetch. A spurious prefetch costs
+#   one semantic search; a missed one costs the model not knowing something
+#   the user expected it to remember. False negatives are worse.
+# - This gate lives in memory_manager (not the plugin) because the question
+#   "should we recall anything at all?" is provider-agnostic.
+
+# Pure ack/continuation words. Stripped of punctuation, case-folded.
+_ACK_WORDS = frozenset({
+    "ok", "okay", "k", "kk", "yes", "yep", "yeah", "yup", "y",
+    "no", "nope", "nah", "n",
+    "sure", "fine", "great", "good", "nice", "cool", "awesome", "perfect",
+    "thanks", "thx", "ty", "thank",
+    "continue", "go", "proceed", "next", "more", "again",
+    "done", "ready", "lgtm", "ack",
+    "hi", "hello", "hey", "yo", "sup",
+})
+
+# Multi-word ack phrases (after normalization).
+_ACK_PHRASES = frozenset({
+    "go ahead", "sounds good", "looks good", "go on", "keep going",
+    "do it", "lets do it", "let's do it", "lets go", "let's go",
+    "do that", "make it so", "thank you", "thanks a lot", "thanks much",
+    "all good", "carry on", "got it", "makes sense",
+})
+
+# Tokens that imply the user is pointing back at something — even in a
+# short message, prefetch may help: "fix that too", "and the other one".
+_REFERENTIAL_TOKENS = frozenset({
+    "that", "those", "this", "these", "it", "them", "they",
+    "other", "another", "same", "previous", "earlier", "before",
+    "last", "above", "below", "again", "also", "too",
+})
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "")
+    if not raw:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def should_prefetch(query: str) -> bool:
+    """Decide whether a user message warrants a semantic-recall prefetch.
+
+    Returns False for short acks/continuations that gain nothing from
+    historical recall. Returns True for anything resembling a real
+    question, command, or context-referential message.
+    """
+    if not _env_bool("HERMES_PREFETCH_GATE", True):
+        return True  # gate disabled — preserve old behavior
+    if not isinstance(query, str):
+        return True
+    stripped = query.strip()
+    if not stripped:
+        return False  # empty message — nothing to recall against
+
+    # Question mark anywhere → always prefetch. Cheapest signal of intent.
+    if "?" in stripped:
+        return True
+
+    # Normalize: lowercase, drop trailing punctuation, collapse whitespace.
+    normalized = re.sub(r"\s+", " ", stripped.lower())
+    normalized = normalized.strip(".!,;:\"'`()[]{}")
+
+    # Whole-message ack phrases.
+    if normalized in _ACK_PHRASES:
+        return False
+
+    # Single-word ack / continuation.
+    tokens = re.findall(r"[a-z0-9']+", normalized)
+    if not tokens:
+        return False  # punctuation/emoji only
+    if len(tokens) == 1 and tokens[0] in _ACK_WORDS:
+        return False
+
+    # Referential tokens → prefetch even if short (user is pointing back).
+    if any(tok in _REFERENTIAL_TOKENS for tok in tokens):
+        return True
+
+    # Length floor: short AND no question / no referential → skip.
+    try:
+        min_chars = int(os.environ.get("HERMES_PREFETCH_MIN_QUERY_CHARS", "12"))
+    except ValueError:
+        min_chars = 12
+    if len(stripped) < min_chars:
+        return False
+
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +447,14 @@ class MemoryManager:
 
         Returns merged context text labeled by provider. Empty providers
         are skipped. Failures in one provider don't block others.
+
+        Skips entirely for ack/continuation messages (see should_prefetch);
+        a "thanks" or "continue" turn doesn't benefit from semantic recall
+        and just wastes an embedding lookup + tokens on dilute context.
         """
+        if not should_prefetch(query):
+            logger.debug("Prefetch skipped (gate): %r", query[:60] if isinstance(query, str) else query)
+            return ""
         parts = []
         for provider in self._providers:
             try:
@@ -356,7 +469,13 @@ class MemoryManager:
         return "\n\n".join(parts)
 
     def queue_prefetch_all(self, query: str, *, session_id: str = "") -> None:
-        """Queue background prefetch on all providers for the next turn."""
+        """Queue background prefetch on all providers for the next turn.
+
+        Honors the same gate as prefetch_all — no point warming a query
+        we'd skip next turn anyway.
+        """
+        if not should_prefetch(query):
+            return
         for provider in self._providers:
             try:
                 provider.queue_prefetch(query, session_id=session_id)
