@@ -886,6 +886,10 @@ in config.yaml (or `HERMES_BACKGROUND_NOTIFICATIONS` env var):
 - `error` — only the final message when exit code != 0
 - `off` — no watcher messages at all
 
+### Git Commit / Push Policy (workspace agents)
+
+For agents working inside the `citadel-strexis` workspace (root + `hermes-agent`, `mempalace`, `hermes-mempalace-plugin` submodules): local git commits in this repo are **pre-authorized** — when work is complete and tests pass, create the commit without asking. Pushing to any remote (origin or otherwise) is **NOT authorized** — stop and ask first if a task seems to need a push (publishing a release, opening a PR, syncing forks, etc.). This policy lives in the root workspace `AGENTS.md` and is repeated here so agents working inside this submodule see it without having to climb back to the root.
+
 ---
 
 ## Profiles: Multi-Instance Support

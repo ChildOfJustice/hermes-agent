@@ -1572,8 +1572,10 @@ def invoke_tool(agent, function_name: str, function_args: dict, effective_task_i
             old_text=function_args.get("old_text"),
             store=agent._memory_store,
         )
-        # Bridge: notify external memory provider of built-in memory writes
-        if agent._memory_manager and function_args.get("action") in {"add", "replace"}:
+        # Bridge: notify external memory provider of built-in memory writes.
+        # Includes remove so providers can drop stale mirror drawers; old_text
+        # lets them locate the exact prior entry on replace/remove.
+        if agent._memory_manager and function_args.get("action") in {"add", "replace", "remove"}:
             try:
                 agent._memory_manager.on_memory_write(
                     function_args.get("action", ""),
@@ -1582,6 +1584,7 @@ def invoke_tool(agent, function_name: str, function_args: dict, effective_task_i
                     metadata=agent._build_memory_write_metadata(
                         task_id=effective_task_id,
                         tool_call_id=tool_call_id,
+                        old_text=function_args.get("old_text"),
                     ),
                 )
             except Exception:

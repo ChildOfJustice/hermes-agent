@@ -298,8 +298,16 @@ def build_memory_write_metadata(
     execution_context: Optional[str] = None,
     task_id: Optional[str] = None,
     tool_call_id: Optional[str] = None,
+    old_text: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Build provenance metadata for external memory-provider mirrors."""
+    """Build provenance metadata for external memory-provider mirrors.
+
+    ``old_text`` is the substring the built-in memory tool used to locate an
+    existing entry on ``replace``/``remove``. Forwarding it lets external
+    providers (e.g. MemPalace) precisely upsert or delete their mirror of the
+    same logical entry, instead of leaving stale prior versions behind.
+    Absent for ``add`` actions.
+    """
     metadata: Dict[str, Any] = {
         "write_origin": write_origin or getattr(agent, "_memory_write_origin", "assistant_tool"),
         "execution_context": (
@@ -315,6 +323,8 @@ def build_memory_write_metadata(
         metadata["task_id"] = task_id
     if tool_call_id:
         metadata["tool_call_id"] = tool_call_id
+    if old_text:
+        metadata["old_text"] = old_text
     return {k: v for k, v in metadata.items() if v not in {None, ""}}
 
 

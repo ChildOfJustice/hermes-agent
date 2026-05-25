@@ -923,16 +923,20 @@ class TestOnMemoryWriteBridge:
         mgr.on_memory_write("replace", "user", "updated pref")
         assert p.memory_writes == [("replace", "user", "updated pref")]
 
-    def test_on_memory_write_remove_not_bridged(self):
-        """The bridge intentionally skips 'remove' — only add/replace notify."""
-        # This tests the contract that run_agent.py checks:
-        #   function_args.get("action") in ("add", "replace")
+    def test_on_memory_write_remove_is_bridged(self):
+        """The bridge fires on add/replace/remove.
+
+        run_agent / tool_executor gate on
+            function_args.get("action") in ("add", "replace", "remove")
+        so providers can mirror creates, locate-and-update prior entries on
+        replace (using old_text in metadata), and drop stale mirror state on
+        remove. The manager itself does not filter actions — it forwards every
+        call to every provider.
+        """
         mgr = MemoryManager()
         p = FakeMemoryProvider("ext")
         mgr.add_provider(p)
 
-        # Manager itself doesn't filter — run_agent.py does.
-        # But providers should handle remove gracefully.
         mgr.on_memory_write("remove", "memory", "old fact")
         assert p.memory_writes == [("remove", "memory", "old fact")]
 
@@ -1393,3 +1397,77 @@ class TestPrefetchGate:
         result = mgr.prefetch_all("ok")
         assert "recalled" in result
         assert p.prefetch_queries == ["ok"]
+
+
+# ---------------------------------------------------------------------------
+# build_memory_write_metadata — old_text forwarding for precise mirror upsert
+# ---------------------------------------------------------------------------
+
+
+class _FakeAgent:
+    """Minimal stand-in matching the attribute surface used by
+    build_memory_write_metadata."""
+
+    def __init__(self, session_id="sess-A", parent_session_id="", platform="cli"):
+        self.session_id = session_id
+        self._parent_session_id = parent_session_id
+        self.platform = platform
+        self._memory_write_origin = "assistant_tool"
+        self._memory_write_context = "foreground"
+
+
+class TestBuildMemoryWriteMetadataOldText:
+    """Regression: external memory providers must receive old_text so they can
+    precisely upsert/remove the mirror of an existing entry on replace/remove.
+
+    Without old_text the MemPalace plugin (and any similar mirror provider)
+    cannot locate the prior drawer and stale versions accumulate, polluting
+    auto-prefetch and inflating storage."""
+
+    def test_old_text_present_when_supplied(self):
+        from agent.background_review import build_memory_write_metadata
+
+        md = build_memory_write_metadata(
+            _FakeAgent(),
+            task_id="t-1",
+            tool_call_id="tc-1",
+            old_text="prefers concise responses",
+        )
+        assert md["old_text"] == "prefers concise responses"
+        assert md["task_id"] == "t-1"
+        assert md["tool_call_id"] == "tc-1"
+
+    def test_old_text_absent_for_add(self):
+        """Add actions do not carry old_text — key must not appear in dict
+        so downstream providers can branch cleanly on `'old_text' in metadata`."""
+        from agent.background_review import build_memory_write_metadata
+
+        md = build_memory_write_metadata(_FakeAgent(), task_id="t-1")
+        assert "old_text" not in md
+
+    def test_old_text_empty_string_filtered(self):
+        """Empty/None old_text must not pollute the dict (same contract as
+        other empty fields — see the final dict-comp filter)."""
+        from agent.background_review import build_memory_write_metadata
+
+        md = build_memory_write_metadata(_FakeAgent(), old_text="")
+        assert "old_text" not in md
+
+    def test_old_text_propagates_through_run_agent_forwarder(self):
+        """The AIAgent forwarder must thread old_text through to the helper.
+
+        Guard against the keyword being accidentally dropped when the forwarder
+        is refactored (it has ~5 keyword args; easy to omit one)."""
+        import inspect
+        from agent.background_review import build_memory_write_metadata
+
+        params = inspect.signature(build_memory_write_metadata).parameters
+        assert "old_text" in params, (
+            "build_memory_write_metadata must accept old_text kwarg so the "
+            "AIAgent forwarder can thread it through to mirror providers."
+        )
+        # And the parameter must be keyword-capable (not positional-only).
+        assert params["old_text"].kind in (
+            inspect.Parameter.KEYWORD_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )

@@ -636,8 +636,12 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
                 old_text=function_args.get("old_text"),
                 store=agent._memory_store,
             )
-            # Bridge: notify external memory provider of built-in memory writes
-            if agent._memory_manager and function_args.get("action") in {"add", "replace"}:
+            # Bridge: notify external memory provider of built-in memory writes.
+            # We fire on add/replace/remove so providers can mirror creates,
+            # update prior entries (using old_text to locate them), and drop
+            # stale mirrors when an entry is removed. Read is intentionally
+            # excluded — it doesn't mutate state.
+            if agent._memory_manager and function_args.get("action") in {"add", "replace", "remove"}:
                 try:
                     agent._memory_manager.on_memory_write(
                         function_args.get("action", ""),
@@ -646,6 +650,7 @@ def execute_tool_calls_sequential(agent, assistant_message, messages: list, effe
                         metadata=agent._build_memory_write_metadata(
                             task_id=effective_task_id,
                             tool_call_id=getattr(tool_call, "id", None),
+                            old_text=function_args.get("old_text"),
                         ),
                     )
                 except Exception:
