@@ -3270,22 +3270,60 @@ def resolve_provider_client(
     # ── Custom endpoint (OPENAI_BASE_URL + OPENAI_API_KEY) ───────────
     if provider == "custom":
         if explicit_base_url:
-            custom_base = _to_openai_base_url(explicit_base_url).strip()
             custom_key = (
                 (explicit_api_key or "").strip()
                 or os.getenv("OPENAI_API_KEY", "").strip()
                 or "no-key-required"  # local servers don't need auth
             )
+            final_model = _normalize_resolved_model(
+                model or (main_runtime.get("model") if main_runtime else None) or "gpt-4o-mini",
+                provider,
+            )
+            # When the task declares api_mode=anthropic_messages, the
+            # endpoint speaks the Anthropic Messages API directly.  Skip
+            # _to_openai_base_url (which would corrupt URLs ending in
+            # /anthropic by rewriting them to /v1) and route straight to
+            # AnthropicAuxiliaryClient without any OpenAI-wire wrapping.
+            if api_mode == "anthropic_messages":
+                raw_anthr_base = explicit_base_url.strip().rstrip("/")
+                if not raw_anthr_base:
+                    logger.warning(
+                        "resolve_provider_client: explicit custom anthropic_messages "
+                        "endpoint requested but base_url is empty"
+                    )
+                    return None, None
+                logger.debug(
+                    "resolve_provider_client: custom anthropic_messages endpoint "
+                    "(%s, model=%s)", raw_anthr_base, final_model,
+                )
+                try:
+                    from agent.anthropic_adapter import build_anthropic_client
+                    real_client = build_anthropic_client(custom_key, raw_anthr_base)
+                except ImportError:
+                    logger.warning(
+                        "resolve_provider_client: api_mode=anthropic_messages but "
+                        "the anthropic SDK is not installed — falling back to OpenAI-wire."
+                    )
+                    _fb_base = _to_openai_base_url(raw_anthr_base)
+                    _fb_clean, _fb_dq = _extract_url_query_params(_fb_base)
+                    _fb_extra = {"default_query": _fb_dq} if _fb_dq else {}
+                    client = OpenAI(api_key=custom_key, base_url=_fb_clean, **_fb_extra)
+                    return (_to_async_client(client, final_model, is_vision=is_vision) if async_mode
+                            else (client, final_model))
+                sync_anthr = AnthropicAuxiliaryClient(
+                    real_client, final_model, custom_key, raw_anthr_base, is_oauth=False,
+                )
+                if async_mode:
+                    return AsyncAnthropicAuxiliaryClient(sync_anthr), final_model
+                return sync_anthr, final_model
+
+            custom_base = _to_openai_base_url(explicit_base_url).strip()
             if not custom_base:
                 logger.warning(
                     "resolve_provider_client: explicit custom endpoint requested "
                     "but base_url is empty"
                 )
                 return None, None
-            final_model = _normalize_resolved_model(
-                model or (main_runtime.get("model") if main_runtime else None) or "gpt-4o-mini",
-                provider,
-            )
             extra = {}
             _clean_base, _dq = _extract_url_query_params(custom_base)
             if _dq:
