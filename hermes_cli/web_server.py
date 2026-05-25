@@ -3257,6 +3257,154 @@ async def get_models_analytics(days: int = 30):
 
 
 # ---------------------------------------------------------------------------
+# MemPalace memory-overhead analytics endpoint
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/analytics/mempalace")
+async def get_mempalace_analytics(days: int = 30):
+    """Aggregate mempalace_events.jsonl and token_usage.jsonl for the
+    memory-overhead panel on the Analytics dashboard page.
+
+    Returns per-session and aggregate metrics so the UI can show:
+    - average and max prefetch tokens per turn
+    - memory overhead % (mem tokens / total input tokens)
+    - per-tool call counts and average response sizes
+    - fraction of turns where prefetch returned nothing (had_results=false)
+    - daily prefetch token series for a sparkline
+
+    All token values are rough estimates (4 chars ≈ 1 token).
+    Returns gracefully empty structures when the files don't exist yet.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    from collections import defaultdict as _defaultdict
+
+    metrics_dir = _Path(os.environ.get("HERMES_METRICS_DIR", "/data/metrics"))
+    cutoff_ts = time.time() - (days * 86400)
+
+    # --- read mempalace_events.jsonl ---
+    prefetch_rows: list[dict] = []
+    tool_rows: list[dict] = []
+    events_path = metrics_dir / "mempalace_events.jsonl"
+    if events_path.exists():
+        try:
+            for raw in events_path.read_text(encoding="utf-8").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    rec = _json.loads(raw)
+                except Exception:
+                    continue
+                # Filter by time window when timestamp is present.
+                ts_str = rec.get("timestamp", "")
+                if ts_str:
+                    try:
+                        from datetime import datetime, timezone
+                        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
+                        if ts < cutoff_ts:
+                            continue
+                    except Exception:
+                        pass
+                if rec.get("event") == "prefetch":
+                    prefetch_rows.append(rec)
+                elif rec.get("event") == "tool_call":
+                    tool_rows.append(rec)
+        except OSError:
+            pass
+
+    # --- read token_usage.jsonl ---
+    llm_rows: list[dict] = []
+    usage_path = metrics_dir / "token_usage.jsonl"
+    if usage_path.exists():
+        try:
+            for raw in usage_path.read_text(encoding="utf-8").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    rec = _json.loads(raw)
+                except Exception:
+                    continue
+                ts_str = rec.get("ts", "")
+                if ts_str:
+                    try:
+                        from datetime import datetime, timezone
+                        ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
+                        if ts < cutoff_ts:
+                            continue
+                    except Exception:
+                        pass
+                llm_rows.append(rec)
+        except OSError:
+            pass
+
+    # --- aggregate ---
+    total_turns = len(prefetch_rows)
+    turns_with_results = sum(1 for r in prefetch_rows if r.get("had_results"))
+    prefetch_tokens = [r.get("result_tokens_est", 0) for r in prefetch_rows]
+    avg_prefetch_tokens = round(sum(prefetch_tokens) / total_turns) if total_turns else 0
+    max_prefetch_tokens = max(prefetch_tokens, default=0)
+
+    total_input_tokens = sum(r.get("input_tokens", 0) for r in llm_rows)
+    total_mem_ctx_tokens = sum(r.get("memory_context_tokens_est", 0) for r in llm_rows)
+    mem_overhead_pct = round(
+        100 * total_mem_ctx_tokens / total_input_tokens, 1
+    ) if total_input_tokens else 0.0
+
+    # per-tool breakdown
+    tool_stats: dict[str, dict] = {}
+    for r in tool_rows:
+        tool = r.get("tool", "unknown")
+        if tool not in tool_stats:
+            tool_stats[tool] = {"calls": 0, "total_tokens": 0}
+        tool_stats[tool]["calls"] += 1
+        tool_stats[tool]["total_tokens"] += r.get("result_tokens_est", 0)
+    tools = sorted(
+        [
+            {
+                "tool": t,
+                "calls": s["calls"],
+                "avg_tokens": round(s["total_tokens"] / s["calls"]) if s["calls"] else 0,
+                "total_tokens": s["total_tokens"],
+            }
+            for t, s in tool_stats.items()
+        ],
+        key=lambda x: -x["total_tokens"],
+    )
+
+    # daily prefetch series — group prefetch rows by UTC date
+    daily_prefetch: dict[str, dict] = {}
+    for r in prefetch_rows:
+        ts_str = r.get("timestamp", "")
+        day = ts_str[:10] if ts_str else "unknown"
+        if day not in daily_prefetch:
+            daily_prefetch[day] = {"day": day, "turns": 0, "prefetch_tokens": 0}
+        daily_prefetch[day]["turns"] += 1
+        daily_prefetch[day]["prefetch_tokens"] += r.get("result_tokens_est", 0)
+    daily = sorted(daily_prefetch.values(), key=lambda x: x["day"])
+
+    return {
+        "period_days": days,
+        "totals": {
+            "total_turns": total_turns,
+            "turns_with_results": turns_with_results,
+            "turns_empty_pct": round(
+                100 * (total_turns - turns_with_results) / total_turns, 1
+            ) if total_turns else 0.0,
+            "avg_prefetch_tokens": avg_prefetch_tokens,
+            "max_prefetch_tokens": max_prefetch_tokens,
+            "total_input_tokens": total_input_tokens,
+            "total_mem_ctx_tokens": total_mem_ctx_tokens,
+            "mem_overhead_pct": mem_overhead_pct,
+        },
+        "tools": tools,
+        "daily": daily,
+    }
+
+
+# ---------------------------------------------------------------------------
 # /api/pty — PTY-over-WebSocket bridge for the dashboard "Chat" tab.
 #
 # The endpoint spawns the same ``hermes --tui`` binary the CLI uses, behind

@@ -92,6 +92,8 @@ export const api = {
     fetchJSON<AnalyticsResponse>(`/api/analytics/usage?days=${days}`),
   getModelsAnalytics: (days: number) =>
     fetchJSON<ModelsAnalyticsResponse>(`/api/analytics/models?days=${days}`),
+  getMempalaceAnalytics: (days: number) =>
+    fetchJSON<MempalaceAnalyticsResponse>(`/api/analytics/mempalace?days=${days}`),
   getConfig: () => fetchJSON<Record<string, unknown>>("/api/config"),
   getDefaults: () => fetchJSON<Record<string, unknown>>("/api/config/defaults"),
   getSchema: () => fetchJSON<{ fields: Record<string, unknown>; category_order: string[] }>("/api/config/schema"),
@@ -505,6 +507,35 @@ export interface AnalyticsResponse {
     summary: AnalyticsSkillsSummary;
     top_skills: AnalyticsSkillEntry[];
   };
+}
+
+export interface MempalaceToolEntry {
+  tool: string;
+  calls: number;
+  avg_tokens: number;
+  total_tokens: number;
+}
+
+export interface MempalaceDailyEntry {
+  day: string;
+  turns: number;
+  prefetch_tokens: number;
+}
+
+export interface MempalaceAnalyticsResponse {
+  period_days: number;
+  totals: {
+    total_turns: number;
+    turns_with_results: number;
+    turns_empty_pct: number;
+    avg_prefetch_tokens: number;
+    max_prefetch_tokens: number;
+    total_input_tokens: number;
+    total_mem_ctx_tokens: number;
+    mem_overhead_pct: number;
+  };
+  tools: MempalaceToolEntry[];
+  daily: MempalaceDailyEntry[];
 }
 
 export interface ProfileInfo {

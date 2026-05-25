@@ -6,6 +6,7 @@ import {
   BarChart3,
   Brain,
   Cpu,
+  Database,
   RefreshCw,
   TrendingUp,
 } from "lucide-react";
@@ -15,6 +16,9 @@ import type {
   AnalyticsDailyEntry,
   AnalyticsModelEntry,
   AnalyticsSkillEntry,
+  MempalaceAnalyticsResponse,
+  MempalaceToolEntry,
+  MempalaceDailyEntry,
 } from "@/lib/api";
 import { timeAgo } from "@/lib/utils";
 import { Button } from "@nous-research/ui/ui/components/button";
@@ -392,6 +396,212 @@ function SkillTable({ skills }: { skills: AnalyticsSkillEntry[] }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// MemPalace Memory Overhead Panel
+// ---------------------------------------------------------------------------
+
+const MEM_CHART_HEIGHT_PX = 80;
+
+function MempalaceSparkline({ daily }: { daily: MempalaceDailyEntry[] }) {
+  if (daily.length === 0) return null;
+  const maxTokens = Math.max(...daily.map((d) => d.prefetch_tokens), 1);
+  return (
+    <div
+      className="flex items-end gap-[2px]"
+      style={{ height: MEM_CHART_HEIGHT_PX }}
+    >
+      {daily.map((d) => {
+        const h = Math.round((d.prefetch_tokens / maxTokens) * MEM_CHART_HEIGHT_PX);
+        return (
+          <div
+            key={d.day}
+            className="flex-1 min-w-0 group relative flex flex-col justify-end"
+            style={{ height: MEM_CHART_HEIGHT_PX }}
+          >
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-10 pointer-events-none">
+              <div className="font-mondwest normal-case bg-card border border-border px-2.5 py-1.5 text-xs text-foreground shadow-lg whitespace-nowrap">
+                <div className="font-medium">{d.day}</div>
+                <div>{d.turns} turns</div>
+                <div>{formatTokens(d.prefetch_tokens)} mem tokens</div>
+              </div>
+            </div>
+            <div
+              className="w-full bg-violet-500/60"
+              style={{ height: Math.max(h, d.prefetch_tokens > 0 ? 1 : 0) }}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MempalaceToolTable({ tools }: { tools: MempalaceToolEntry[] }) {
+  const { sorted, sortKey, sortDir, toggle } = useTableSort(tools, "total_tokens", "desc");
+  if (tools.length === 0) return null;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full font-mondwest normal-case text-sm">
+        <thead>
+          <tr className="border-b border-border text-muted-foreground text-xs">
+            <SortHeader label="Tool" col="tool" sortKey={sortKey} sortDir={sortDir} toggle={toggle} className="text-left py-2 pr-4 font-medium" />
+            <SortHeader label="Calls" col="calls" sortKey={sortKey} sortDir={sortDir} toggle={toggle} className="text-right py-2 px-4 font-medium" />
+            <SortHeader label="Avg tokens" col="avg_tokens" sortKey={sortKey} sortDir={sortDir} toggle={toggle} className="text-right py-2 px-4 font-medium" />
+            <SortHeader label="Total tokens" col="total_tokens" sortKey={sortKey} sortDir={sortDir} toggle={toggle} className="text-right py-2 pl-4 font-medium" />
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((t) => (
+            <tr key={t.tool} className="border-b border-border/50 hover:bg-secondary/20 transition-colors">
+              <td className="py-2 pr-4">
+                <span className="font-mono-ui text-xs">{t.tool}</span>
+              </td>
+              <td className="text-right py-2 px-4 text-muted-foreground">{t.calls}</td>
+              <td className="text-right py-2 px-4">
+                <span className="text-violet-400">{formatTokens(t.avg_tokens)}</span>
+              </td>
+              <td className="text-right py-2 pl-4">
+                <span className="text-violet-400">{formatTokens(t.total_tokens)}</span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function overheadTone(pct: number): string {
+  if (pct >= 20) return "text-destructive";
+  if (pct >= 10) return "text-yellow-400";
+  return "text-emerald-400";
+}
+
+function MempalacePanel({ days }: { days: number }) {
+  const [data, setData] = useState<MempalaceAnalyticsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    api
+      .getMempalaceAnalytics(days)
+      .then(setData)
+      .catch((err) => setError(String(err)))
+      .finally(() => setLoading(false));
+  }, [days]);
+
+  const noData = !data || data.totals.total_turns === 0;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center gap-2">
+          <Database className="h-5 w-5 text-muted-foreground" />
+          <CardTitle className="text-base">MemPalace Memory Overhead</CardTitle>
+        </div>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Token cost of memory context injected per turn. Source: <span className="font-mono">mempalace_events.jsonl</span> + <span className="font-mono">token_usage.jsonl</span>
+        </p>
+      </CardHeader>
+      <CardContent>
+        {loading && (
+          <div className="flex items-center justify-center py-8">
+            <Spinner className="text-primary" />
+          </div>
+        )}
+        {!loading && error && (
+          <p className="text-sm text-destructive text-center py-4">{error}</p>
+        )}
+        {!loading && noData && (
+          <div className="flex flex-col items-center text-muted-foreground py-8 gap-2">
+            <Database className="h-7 w-7 opacity-30" />
+            <p className="text-sm">No memory events recorded yet.</p>
+            <p className="text-xs text-text-tertiary">
+              Metrics accumulate in <span className="font-mono">/data/metrics/</span> as the agent runs.
+            </p>
+          </div>
+        )}
+        {!loading && !error && data && !noData && (
+          <div className="flex flex-col gap-6">
+            {/* Summary stats row */}
+            <Stats
+              items={[
+                {
+                  label: "Mem overhead",
+                  value: (
+                    <span className={overheadTone(data.totals.mem_overhead_pct)}>
+                      {data.totals.mem_overhead_pct}%
+                    </span>
+                  ) as unknown as string,
+                },
+                {
+                  label: "Avg prefetch",
+                  value: `${formatTokens(data.totals.avg_prefetch_tokens)} tok`,
+                },
+                {
+                  label: "Max prefetch",
+                  value: `${formatTokens(data.totals.max_prefetch_tokens)} tok`,
+                },
+                {
+                  label: "Turns tracked",
+                  value: String(data.totals.total_turns),
+                },
+                {
+                  label: "Empty prefetch",
+                  value: `${data.totals.turns_empty_pct}%`,
+                },
+              ]}
+            />
+
+            {/* Overhead explanation */}
+            <div className="flex items-start gap-2 rounded border border-border/50 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              <span className="shrink-0 mt-0.5">ℹ</span>
+              <span>
+                <strong className={overheadTone(data.totals.mem_overhead_pct)}>
+                  {data.totals.mem_overhead_pct}%
+                </strong>{" "}
+                of all input tokens were MemPalace context ({formatTokens(data.totals.total_mem_ctx_tokens)} / {formatTokens(data.totals.total_input_tokens)}).
+                {data.totals.mem_overhead_pct >= 20 && (
+                  <span className="ml-1 text-destructive font-medium">
+                    High overhead — consider lowering MEMPALACE_PREFETCH_MAX_CHARS or MEMPALACE_PREFETCH_RESULTS.
+                  </span>
+                )}
+                {data.totals.turns_empty_pct >= 60 && (
+                  <span className="ml-1 text-yellow-400 font-medium">
+                    {data.totals.turns_empty_pct}% of prefetch turns returned nothing — auto-prefetch may not be pulling its weight.
+                  </span>
+                )}
+              </span>
+            </div>
+
+            {/* Daily sparkline */}
+            {data.daily.length > 1 && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-2 font-mondwest normal-case">Daily prefetch tokens</p>
+                <MempalaceSparkline daily={data.daily} />
+                <div className="flex justify-between mt-1 font-mondwest normal-case text-xs text-text-tertiary">
+                  <span>{data.daily.length > 0 ? data.daily[0].day : ""}</span>
+                  <span>{data.daily.length > 1 ? data.daily[data.daily.length - 1].day : ""}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Tool breakdown */}
+            {data.tools.length > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-2 font-mondwest normal-case">Tool call token cost</p>
+                <MempalaceToolTable tools={data.tools} />
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AnalyticsPage() {
   const [days, setDays] = useState(30);
   const [data, setData] = useState<AnalyticsResponse | null>(null);
@@ -594,8 +804,7 @@ export default function AnalyticsPage() {
               </div>
             </CardContent>
           </Card>
-        )}
-      <PluginSlot name="analytics:bottom" />
+        )}\n      <MempalacePanel days={days} />\n      <PluginSlot name="analytics:bottom" />
     </div>
   );
 }
