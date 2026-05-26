@@ -3339,7 +3339,6 @@ async def get_mempalace_analytics(days: int = 30):
                 llm_rows.append(rec)
         except OSError:
             pass
-
     # --- aggregate ---
     total_turns = len(prefetch_rows)
     turns_with_results = sum(1 for r in prefetch_rows if r.get("had_results"))
@@ -3347,11 +3346,20 @@ async def get_mempalace_analytics(days: int = 30):
     avg_prefetch_tokens = round(sum(prefetch_tokens) / total_turns) if total_turns else 0
     max_prefetch_tokens = max(prefetch_tokens, default=0)
 
-    total_input_tokens = sum(r.get("input_tokens", 0) for r in llm_rows)
+    # Full context-window size = input delta + cache_read + cache_write.
+    # DO NOT use input_tokens alone — with prompt caching active it only
+    # tracks the uncached delta (often 1-3 tokens) and inflates the overhead
+    # ratio to nonsensical thousands-of-percent.
+    total_context_tokens = sum(
+        r.get("input_tokens", 0)
+        + r.get("cache_read_tokens", 0)
+        + r.get("cache_write_tokens", 0)
+        for r in llm_rows
+    )
     total_mem_ctx_tokens = sum(r.get("memory_context_tokens_est", 0) for r in llm_rows)
     mem_overhead_pct = round(
-        100 * total_mem_ctx_tokens / total_input_tokens, 1
-    ) if total_input_tokens else 0.0
+        100 * total_mem_ctx_tokens / total_context_tokens, 1
+    ) if total_context_tokens else 0.0
 
     # per-tool breakdown
     tool_stats: dict[str, dict] = {}
@@ -3374,16 +3382,32 @@ async def get_mempalace_analytics(days: int = 30):
         key=lambda x: -x["total_tokens"],
     )
 
-    # daily prefetch series — group prefetch rows by UTC date
-    daily_prefetch: dict[str, dict] = {}
+    # Daily series — merge prefetch events (for mem tokens) and token_usage
+    # rows (for total context size) so the UI can show mem% per day.
+    daily_data: dict[str, dict] = {}
     for r in prefetch_rows:
         ts_str = r.get("timestamp", "")
         day = ts_str[:10] if ts_str else "unknown"
-        if day not in daily_prefetch:
-            daily_prefetch[day] = {"day": day, "turns": 0, "prefetch_tokens": 0}
-        daily_prefetch[day]["turns"] += 1
-        daily_prefetch[day]["prefetch_tokens"] += r.get("result_tokens_est", 0)
-    daily = sorted(daily_prefetch.values(), key=lambda x: x["day"])
+        if day not in daily_data:
+            daily_data[day] = {"day": day, "turns": 0, "prefetch_tokens": 0, "total_context_tokens": 0}
+        daily_data[day]["turns"] += 1
+        daily_data[day]["prefetch_tokens"] += r.get("result_tokens_est", 0)
+    for r in llm_rows:
+        ts_str = r.get("ts", "")
+        day = ts_str[:10] if ts_str else "unknown"
+        if day not in daily_data:
+            daily_data[day] = {"day": day, "turns": 0, "prefetch_tokens": 0, "total_context_tokens": 0}
+        daily_data[day]["total_context_tokens"] += (
+            r.get("input_tokens", 0)
+            + r.get("cache_read_tokens", 0)
+            + r.get("cache_write_tokens", 0)
+        )
+    # Compute per-day mem overhead %
+    for entry in daily_data.values():
+        ctx = entry["total_context_tokens"]
+        mem = entry["prefetch_tokens"]
+        entry["mem_pct"] = round(100.0 * mem / ctx, 2) if ctx else 0.0
+    daily = sorted(daily_data.values(), key=lambda x: x["day"])
 
     return {
         "period_days": days,
@@ -3395,7 +3419,7 @@ async def get_mempalace_analytics(days: int = 30):
             ) if total_turns else 0.0,
             "avg_prefetch_tokens": avg_prefetch_tokens,
             "max_prefetch_tokens": max_prefetch_tokens,
-            "total_input_tokens": total_input_tokens,
+            "total_context_tokens": total_context_tokens,
             "total_mem_ctx_tokens": total_mem_ctx_tokens,
             "mem_overhead_pct": mem_overhead_pct,
         },

@@ -402,6 +402,51 @@ function SkillTable({ skills }: { skills: AnalyticsSkillEntry[] }) {
 
 const MEM_CHART_HEIGHT_PX = 80;
 
+/** Bar chart showing MemPalace token % of total daily context (the meaningful metric). */
+function MempalacePctHistogram({ daily }: { daily: MempalaceDailyEntry[] }) {
+  const entries = daily.filter((d) => d.total_context_tokens > 0);
+  if (entries.length === 0) return null;
+  const maxPct = Math.max(...entries.map((d) => d.mem_pct), 1);
+  return (
+    <div
+      className="flex items-end gap-[2px]"
+      style={{ height: MEM_CHART_HEIGHT_PX }}
+    >
+      {entries.map((d) => {
+        const h = Math.round((d.mem_pct / maxPct) * MEM_CHART_HEIGHT_PX);
+        const tone =
+          d.mem_pct >= 20
+            ? "bg-destructive/70"
+            : d.mem_pct >= 10
+            ? "bg-yellow-500/60"
+            : "bg-violet-500/60";
+        return (
+          <div
+            key={d.day}
+            className="flex-1 min-w-0 group relative flex flex-col justify-end"
+            style={{ height: MEM_CHART_HEIGHT_PX }}
+          >
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-10 pointer-events-none">
+              <div className="font-mondwest normal-case bg-card border border-border px-2.5 py-1.5 text-xs text-foreground shadow-lg whitespace-nowrap">
+                <div className="font-medium">{d.day}</div>
+                <div>{d.turns} prefetch turns</div>
+                <div>{formatTokens(d.prefetch_tokens)} mem tokens</div>
+                <div>{formatTokens(d.total_context_tokens)} total ctx</div>
+                <div className="font-semibold">{d.mem_pct}% of daily tokens</div>
+              </div>
+            </div>
+            <div
+              className={`w-full ${tone}`}
+              style={{ height: Math.max(h, d.mem_pct > 0 ? 1 : 0) }}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Raw absolute sparkline — shows how many mem tokens were fetched per day. */
 function MempalaceSparkline({ daily }: { daily: MempalaceDailyEntry[] }) {
   if (daily.length === 0) return null;
   const maxTokens = Math.max(...daily.map((d) => d.prefetch_tokens), 1);
@@ -426,7 +471,7 @@ function MempalaceSparkline({ daily }: { daily: MempalaceDailyEntry[] }) {
               </div>
             </div>
             <div
-              className="w-full bg-violet-500/60"
+              className="w-full bg-violet-500/40"
               style={{ height: Math.max(h, d.prefetch_tokens > 0 ? 1 : 0) }}
             />
           </div>
@@ -562,10 +607,16 @@ function MempalacePanel({ days }: { days: number }) {
                 <strong className={overheadTone(data.totals.mem_overhead_pct)}>
                   {data.totals.mem_overhead_pct}%
                 </strong>{" "}
-                of all input tokens were MemPalace context ({formatTokens(data.totals.total_mem_ctx_tokens)} / {formatTokens(data.totals.total_input_tokens)}).
+                of total context tokens were MemPalace memory ({formatTokens(data.totals.total_mem_ctx_tokens)} mem / {formatTokens(data.totals.total_context_tokens)} ctx).
+                {" "}Overhead is measured against the full context window (prompt + cache hits), not just the uncached delta.
                 {data.totals.mem_overhead_pct >= 20 && (
                   <span className="ml-1 text-destructive font-medium">
                     High overhead — consider lowering MEMPALACE_PREFETCH_MAX_CHARS or MEMPALACE_PREFETCH_RESULTS.
+                  </span>
+                )}
+                {data.totals.mem_overhead_pct >= 10 && data.totals.mem_overhead_pct < 20 && (
+                  <span className="ml-1 text-yellow-400 font-medium">
+                    Moderate overhead — monitor trends below.
                   </span>
                 )}
                 {data.totals.turns_empty_pct >= 60 && (
@@ -576,10 +627,25 @@ function MempalacePanel({ days }: { days: number }) {
               </span>
             </div>
 
-            {/* Daily sparkline */}
+            {/* % of daily tokens histogram — primary chart */}
+            {data.daily.filter((d) => d.total_context_tokens > 0).length > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-2 font-mondwest normal-case">
+                  Daily MemPalace % of total context tokens
+                  <span className="ml-2 text-text-tertiary">(hover for details)</span>
+                </p>
+                <MempalacePctHistogram daily={data.daily} />
+                <div className="flex justify-between mt-1 font-mondwest normal-case text-xs text-text-tertiary">
+                  <span>{data.daily.length > 0 ? data.daily[0].day : ""}</span>
+                  <span>{data.daily.length > 1 ? data.daily[data.daily.length - 1].day : ""}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Raw daily prefetch volume sparkline — secondary chart */}
             {data.daily.length > 1 && (
               <div>
-                <p className="text-xs text-muted-foreground mb-2 font-mondwest normal-case">Daily prefetch tokens</p>
+                <p className="text-xs text-muted-foreground mb-2 font-mondwest normal-case">Daily prefetch tokens (absolute)</p>
                 <MempalaceSparkline daily={data.daily} />
                 <div className="flex justify-between mt-1 font-mondwest normal-case text-xs text-text-tertiary">
                   <span>{data.daily.length > 0 ? data.daily[0].day : ""}</span>

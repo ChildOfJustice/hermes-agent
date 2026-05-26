@@ -520,6 +520,10 @@ export interface MempalaceDailyEntry {
   day: string;
   turns: number;
   prefetch_tokens: number;
+  /** Full context-window tokens that day (input + cache_read + cache_write) */
+  total_context_tokens: number;
+  /** MemPalace tokens as % of total context tokens for that day */
+  mem_pct: number;
 }
 
 export interface MempalaceAnalyticsResponse {
@@ -530,7 +534,8 @@ export interface MempalaceAnalyticsResponse {
     turns_empty_pct: number;
     avg_prefetch_tokens: number;
     max_prefetch_tokens: number;
-    total_input_tokens: number;
+    /** Full context-window tokens (input + cache_read + cache_write) — correct denominator for overhead % */
+    total_context_tokens: number;
     total_mem_ctx_tokens: number;
     mem_overhead_pct: number;
   };
