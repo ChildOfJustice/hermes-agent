@@ -573,6 +573,55 @@ export interface MempalaceAnalyticsResponse {
   daily: MempalaceDailyEntry[];
 }
 
+export interface EfficiencyAnalyticsCacheDailyEntry {
+  day: string;
+  cache_read: number;
+  cache_write: number;
+  hit_rate_pct: number;
+  cost_usd: number;
+  savings_usd: number;
+}
+
+export interface EfficiencyAnalyticsCostDailyEntry {
+  day: string;
+  cost_usd: number;
+  savings_usd: number;
+}
+
+export interface EfficiencyAnalyticsResponse {
+  period_days: number;
+  cache: {
+    hit_rate_pct: number;
+    total_cache_read: number;
+    total_cache_write: number;
+    total_context: number;
+    cost_with_cache: number;
+    cost_without_cache: number;
+    savings_usd: number;
+    savings_pct: number;
+    daily: EfficiencyAnalyticsCacheDailyEntry[];
+  };
+  cost: {
+    total_usd: number;
+    input_usd: number;
+    output_usd: number;
+    cache_write_usd: number;
+    cache_read_usd: number;
+    daily: EfficiencyAnalyticsCostDailyEntry[];
+  };
+  iteration: {
+    total_llm_calls: number;
+    total_stops: number;
+    stop_rate_pct: number;
+    avg_calls_per_stop: number;
+    calls_near_limit: number;
+    calls_near_limit_pct: number;
+    avg_tool_calls_per_llm_call: number;
+    avg_output_tokens: number;
+    avg_context_growth_x: number;
+  };
+}
+
 export interface ProfileInfo {
   name: string;
   path: string;
