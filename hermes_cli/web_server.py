@@ -3257,9 +3257,235 @@ async def get_models_analytics(days: int = 30):
 
 
 # ---------------------------------------------------------------------------
-# MemPalace memory-overhead analytics endpoint
+# Agent efficiency analytics endpoint
+# ---------------------------------------------------------------------------
+#
+# Reads token_usage.jsonl and computes cache efficiency, cost estimates, and
+# agent iteration health metrics that are not derivable from the session DB
+# (which only stores session-level aggregates, not per-LLM-call detail).
+#
+# Pricing constants for claude-sonnet-4-6 (USD per million tokens).
+# Update if you switch model. These are published Anthropic list prices.
+_PRICE_INPUT = 3.0        # uncached input
+_PRICE_OUTPUT = 15.0      # output
+_PRICE_CACHE_WRITE = 3.75 # writing to cache
+_PRICE_CACHE_READ = 0.30  # reading from cache (the cheap part)
+
 # ---------------------------------------------------------------------------
 
+
+@app.get("/api/analytics/efficiency")
+async def get_efficiency_analytics(days: int = 30):
+    """Aggregate token_usage.jsonl for cache efficiency, cost estimates, and
+    agent iteration health metrics.
+
+    Returns:
+    - cache: hit rate %, savings vs no-cache, daily hit-rate series
+    - cost: estimated cost breakdown (input/output/cache) + daily series
+    - iteration: avg LLM calls per turn, stop rate, tool-limit proximity,
+                 avg context growth factor within a session
+    All token estimates from token_usage.jsonl (prompt-caching aware).
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    from collections import defaultdict as _dd
+
+    metrics_dir = _Path(os.environ.get("HERMES_METRICS_DIR", "/data/metrics"))
+    cutoff_ts = time.time() - (days * 86400)
+
+    usage_path = metrics_dir / "token_usage.jsonl"
+    rows: list[dict] = []
+    if usage_path.exists():
+        try:
+            for raw in usage_path.read_text(encoding="utf-8").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    rec = _json.loads(raw)
+                except Exception:
+                    continue
+                ts_str = rec.get("ts", "")
+                if ts_str:
+                    try:
+                        from datetime import datetime as _dt, timezone as _tz
+                        ts = _dt.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
+                        if ts < cutoff_ts:
+                            continue
+                    except Exception:
+                        pass
+                rows.append(rec)
+        except OSError:
+            pass
+
+    if not rows:
+        empty_daily: list = []
+        return {
+            "period_days": days,
+            "cache": {
+                "hit_rate_pct": 0.0,
+                "total_cache_read": 0,
+                "total_cache_write": 0,
+                "total_context": 0,
+                "cost_with_cache": 0.0,
+                "cost_without_cache": 0.0,
+                "savings_usd": 0.0,
+                "savings_pct": 0.0,
+                "daily": empty_daily,
+            },
+            "cost": {
+                "total_usd": 0.0,
+                "input_usd": 0.0,
+                "output_usd": 0.0,
+                "cache_write_usd": 0.0,
+                "cache_read_usd": 0.0,
+                "daily": empty_daily,
+            },
+            "iteration": {
+                "total_llm_calls": 0,
+                "total_stops": 0,
+                "stop_rate_pct": 0.0,
+                "avg_calls_per_stop": 0.0,
+                "calls_near_limit": 0,
+                "calls_near_limit_pct": 0.0,
+                "avg_tool_calls_per_llm_call": 0.0,
+                "avg_output_tokens": 0.0,
+                "avg_context_growth_x": 0.0,
+            },
+        }
+
+    # --- Cache efficiency ---
+    total_cache_read = sum(r.get("cache_read_tokens", 0) for r in rows)
+    total_cache_write = sum(r.get("cache_write_tokens", 0) for r in rows)
+    total_context = sum(
+        r.get("input_tokens", 0) + r.get("cache_read_tokens", 0) + r.get("cache_write_tokens", 0)
+        for r in rows
+    )
+    cache_hit_rate = round(
+        100.0 * total_cache_read / (total_cache_read + total_cache_write), 1
+    ) if (total_cache_read + total_cache_write) else 0.0
+
+    # Cost with cache vs hypothetical cost without cache
+    def _cost(r: dict) -> float:
+        return (
+            r.get("input_tokens", 0) * _PRICE_INPUT / 1e6
+            + r.get("cache_write_tokens", 0) * _PRICE_CACHE_WRITE / 1e6
+            + r.get("cache_read_tokens", 0) * _PRICE_CACHE_READ / 1e6
+            + r.get("output_tokens", 0) * _PRICE_OUTPUT / 1e6
+        )
+
+    def _cost_no_cache(r: dict) -> float:
+        # All cache_read tokens become full input_price tokens
+        return (
+            (r.get("input_tokens", 0) + r.get("cache_read_tokens", 0)) * _PRICE_INPUT / 1e6
+            + r.get("cache_write_tokens", 0) * _PRICE_CACHE_WRITE / 1e6
+            + r.get("output_tokens", 0) * _PRICE_OUTPUT / 1e6
+        )
+
+    cost_with_cache = sum(_cost(r) for r in rows)
+    cost_without_cache = sum(_cost_no_cache(r) for r in rows)
+    savings_usd = cost_without_cache - cost_with_cache
+    savings_pct = round(100.0 * savings_usd / cost_without_cache, 1) if cost_without_cache else 0.0
+
+    # Daily cache series
+    daily_cache: dict[str, dict] = {}
+    for r in rows:
+        day = r.get("ts", "")[:10] or "unknown"
+        if day not in daily_cache:
+            daily_cache[day] = {
+                "day": day, "cache_read": 0, "cache_write": 0,
+                "hit_rate_pct": 0.0, "cost_usd": 0.0, "savings_usd": 0.0,
+            }
+        daily_cache[day]["cache_read"] += r.get("cache_read_tokens", 0)
+        daily_cache[day]["cache_write"] += r.get("cache_write_tokens", 0)
+        daily_cache[day]["cost_usd"] += _cost(r)
+        daily_cache[day]["savings_usd"] += _cost_no_cache(r) - _cost(r)
+    for entry in daily_cache.values():
+        rd, wr = entry["cache_read"], entry["cache_write"]
+        entry["hit_rate_pct"] = round(100.0 * rd / (rd + wr), 1) if (rd + wr) else 0.0
+        entry["cost_usd"] = round(entry["cost_usd"], 4)
+        entry["savings_usd"] = round(entry["savings_usd"], 4)
+
+    cache_daily = sorted(daily_cache.values(), key=lambda x: x["day"])
+
+    # --- Cost breakdown ---
+    input_usd = sum(r.get("input_tokens", 0) * _PRICE_INPUT / 1e6 for r in rows)
+    output_usd = sum(r.get("output_tokens", 0) * _PRICE_OUTPUT / 1e6 for r in rows)
+    cache_write_usd = sum(r.get("cache_write_tokens", 0) * _PRICE_CACHE_WRITE / 1e6 for r in rows)
+    cache_read_usd = sum(r.get("cache_read_tokens", 0) * _PRICE_CACHE_READ / 1e6 for r in rows)
+
+    # Daily cost (reuse daily_cache which already accumulated cost_usd)
+    cost_daily = [
+        {"day": e["day"], "cost_usd": e["cost_usd"], "savings_usd": e["savings_usd"]}
+        for e in cache_daily
+    ]
+
+    # --- Iteration health ---
+    total_llm_calls = len(rows)
+    stops = [r for r in rows if r.get("finish_reason") == "stop"]
+    total_stops = len(stops)
+    stop_rate_pct = round(100.0 * total_stops / total_llm_calls, 1) if total_llm_calls else 0.0
+    avg_calls_per_stop = round(total_llm_calls / total_stops, 1) if total_stops else 0.0
+
+    # Calls near the max_iterations tool limit (tool_call_count >= 85 out of 90)
+    near_limit = sum(1 for r in rows if r.get("tool_call_count", 0) >= 85)
+    near_limit_pct = round(100.0 * near_limit / total_llm_calls, 1) if total_llm_calls else 0.0
+
+    tool_counts = [r.get("tool_call_count", 0) for r in rows]
+    avg_tool_calls = round(sum(tool_counts) / len(tool_counts), 1) if tool_counts else 0.0
+
+    out_tokens = [r.get("output_tokens", 0) for r in rows]
+    avg_output = round(sum(out_tokens) / len(out_tokens), 0) if out_tokens else 0.0
+
+    # Context growth within sessions: ratio of last-call context / first-call context
+    sess_calls: dict[str, list] = _dd(list)
+    for r in rows:
+        ctx = r.get("input_tokens", 0) + r.get("cache_read_tokens", 0) + r.get("cache_write_tokens", 0)
+        sess_calls[r.get("session_id", "")].append(ctx)
+    growth_factors = []
+    for sid, ctxs in sess_calls.items():
+        if len(ctxs) > 1 and ctxs[0] > 0:
+            growth_factors.append(ctxs[-1] / ctxs[0])
+    avg_ctx_growth = round(sum(growth_factors) / len(growth_factors), 1) if growth_factors else 1.0
+
+    return {
+        "period_days": days,
+        "cache": {
+            "hit_rate_pct": cache_hit_rate,
+            "total_cache_read": total_cache_read,
+            "total_cache_write": total_cache_write,
+            "total_context": total_context,
+            "cost_with_cache": round(cost_with_cache, 4),
+            "cost_without_cache": round(cost_without_cache, 4),
+            "savings_usd": round(savings_usd, 4),
+            "savings_pct": savings_pct,
+            "daily": cache_daily,
+        },
+        "cost": {
+            "total_usd": round(cost_with_cache, 4),
+            "input_usd": round(input_usd, 4),
+            "output_usd": round(output_usd, 4),
+            "cache_write_usd": round(cache_write_usd, 4),
+            "cache_read_usd": round(cache_read_usd, 4),
+            "daily": cost_daily,
+        },
+        "iteration": {
+            "total_llm_calls": total_llm_calls,
+            "total_stops": total_stops,
+            "stop_rate_pct": stop_rate_pct,
+            "avg_calls_per_stop": avg_calls_per_stop,
+            "calls_near_limit": near_limit,
+            "calls_near_limit_pct": near_limit_pct,
+            "avg_tool_calls_per_llm_call": avg_tool_calls,
+            "avg_output_tokens": avg_output,
+            "avg_context_growth_x": avg_ctx_growth,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# MemPalace memory-overhead analytics endpoint
+# ---------------------------------------------------------------------------
 
 @app.get("/api/analytics/mempalace")
 async def get_mempalace_analytics(days: int = 30):
@@ -3409,6 +3635,55 @@ async def get_mempalace_analytics(days: int = 30):
         entry["mem_pct"] = round(100.0 * mem / ctx, 2) if ctx else 0.0
     daily = sorted(daily_data.values(), key=lambda x: x["day"])
 
+    # --- Cache efficiency ---
+    total_cache_read = sum(r.get("cache_read_tokens", 0) for r in llm_rows)
+    total_cache_write = sum(r.get("cache_write_tokens", 0) for r in llm_rows)
+    cache_hit_pct = round(100.0 * total_cache_read / total_context_tokens, 1) if total_context_tokens else 0.0
+    # How many times on average was each written cache block re-read — the
+    # higher this is the better prompt caching is working.
+    cache_reuse_ratio = round(total_cache_read / total_cache_write, 1) if total_cache_write else 0.0
+
+    # --- Tool call density ---
+    total_api_calls = len(llm_rows)
+    total_tool_call_events = sum(r.get("tool_call_count", 0) for r in llm_rows)
+    tool_dense_api_calls = sum(1 for r in llm_rows if r.get("finish_reason") == "tool_calls")
+    stop_api_calls = sum(1 for r in llm_rows if r.get("finish_reason") == "stop")
+    avg_tools_per_api_call = round(total_tool_call_events / total_api_calls, 1) if total_api_calls else 0.0
+    # fraction of LLM calls that ended in a tool invocation vs a real reply
+    tool_call_pct = round(100.0 * tool_dense_api_calls / total_api_calls, 1) if total_api_calls else 0.0
+
+    # --- Output ratio — how much of the context window becomes actual reply ---
+    total_output_tokens = sum(r.get("output_tokens", 0) for r in llm_rows)
+    output_ratio_pct = round(100.0 * total_output_tokens / total_context_tokens, 2) if total_context_tokens else 0.0
+    avg_output_per_call = round(total_output_tokens / total_api_calls) if total_api_calls else 0
+
+    # --- Per-session cost table (top sessions by context) ---
+    from collections import defaultdict as _dd2
+    sess_rows: dict = _dd2(list)
+    for r in llm_rows:
+        sess_rows[r.get("session_id", "unknown")].append(r)
+    top_sessions = []
+    for sid, rows in sess_rows.items():
+        s_ctx = sum(r.get("input_tokens", 0) + r.get("cache_read_tokens", 0) + r.get("cache_write_tokens", 0) for r in rows)
+        s_cache_read = sum(r.get("cache_read_tokens", 0) for r in rows)
+        s_output = sum(r.get("output_tokens", 0) for r in rows)
+        s_api_calls = len(rows)
+        s_tool_calls = sum(r.get("tool_call_count", 0) for r in rows)
+        s_turns = max((r.get("turn", 0) for r in rows), default=0)
+        s_date = min((r.get("ts", "")[:10] for r in rows if r.get("ts")), default="")
+        top_sessions.append({
+            "session_id": sid,
+            "date": s_date,
+            "total_context_tokens": s_ctx,
+            "cache_hit_pct": round(100.0 * s_cache_read / s_ctx, 1) if s_ctx else 0.0,
+            "output_tokens": s_output,
+            "api_calls": s_api_calls,
+            "tool_calls": s_tool_calls,
+            "turns": s_turns,
+        })
+    top_sessions.sort(key=lambda x: -x["total_context_tokens"])
+    top_sessions = top_sessions[:10]
+
     return {
         "period_days": days,
         "totals": {
@@ -3423,6 +3698,23 @@ async def get_mempalace_analytics(days: int = 30):
             "total_mem_ctx_tokens": total_mem_ctx_tokens,
             "mem_overhead_pct": mem_overhead_pct,
         },
+        "cache": {
+            "hit_pct": cache_hit_pct,
+            "reuse_ratio": cache_reuse_ratio,
+            "total_read_tokens": total_cache_read,
+            "total_write_tokens": total_cache_write,
+        },
+        "efficiency": {
+            "total_api_calls": total_api_calls,
+            "total_tool_call_events": total_tool_call_events,
+            "avg_tools_per_api_call": avg_tools_per_api_call,
+            "tool_call_pct": tool_call_pct,
+            "stop_api_calls": stop_api_calls,
+            "total_output_tokens": total_output_tokens,
+            "output_ratio_pct": output_ratio_pct,
+            "avg_output_per_call": avg_output_per_call,
+        },
+        "top_sessions": top_sessions,
         "tools": tools,
         "daily": daily,
     }

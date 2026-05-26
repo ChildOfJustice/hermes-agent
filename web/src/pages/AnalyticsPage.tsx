@@ -19,6 +19,7 @@ import type {
   MempalaceAnalyticsResponse,
   MempalaceToolEntry,
   MempalaceDailyEntry,
+  MempalaceSessionEntry,
 } from "@/lib/api";
 import { timeAgo } from "@/lib/utils";
 import { Button } from "@nous-research/ui/ui/components/button";
@@ -516,6 +517,190 @@ function MempalaceToolTable({ tools }: { tools: MempalaceToolEntry[] }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Insight cards — cache efficiency, tool density, output ratio
+// ---------------------------------------------------------------------------
+
+interface InsightCardProps {
+  label: string;
+  value: string;
+  tone: "good" | "warn" | "bad" | "neutral";
+  detail: string;
+  advice?: string;
+}
+
+function InsightCard({ label, value, tone, detail, advice }: InsightCardProps) {
+  const toneClass =
+    tone === "good"
+      ? "text-emerald-400 border-emerald-500/30 bg-emerald-950/20"
+      : tone === "warn"
+      ? "text-yellow-400 border-yellow-500/30 bg-yellow-950/20"
+      : tone === "bad"
+      ? "text-destructive border-destructive/30 bg-destructive/10"
+      : "text-muted-foreground border-border/50 bg-muted/20";
+  const valueToneClass =
+    tone === "good"
+      ? "text-emerald-400"
+      : tone === "warn"
+      ? "text-yellow-400"
+      : tone === "bad"
+      ? "text-destructive"
+      : "text-foreground";
+  return (
+    <div className={`rounded border px-3 py-3 flex flex-col gap-1 ${toneClass}`}>
+      <span className="text-[10px] uppercase tracking-widest text-muted-foreground font-mondwest">{label}</span>
+      <span className={`text-xl font-bold font-mondwest ${valueToneClass}`}>{value}</span>
+      <span className="text-xs text-muted-foreground leading-snug">{detail}</span>
+      {advice && (
+        <span className={`text-xs font-medium leading-snug mt-0.5 ${valueToneClass}`}>{advice}</span>
+      )}
+    </div>
+  );
+}
+
+function InsightCards({ data }: { data: MempalaceAnalyticsResponse }) {
+  const { cache, efficiency } = data;
+
+  // Cache health
+  const cacheHitTone =
+    cache.hit_pct >= 85 ? "good" : cache.hit_pct >= 60 ? "warn" : "bad";
+  const cacheHitAdvice =
+    cache.hit_pct < 60
+      ? "Low cache hits — short sessions or frequent model/system-prompt changes may be busting the cache."
+      : cache.hit_pct < 85
+      ? "Moderate cache usage — longer sessions or reducing system-prompt churn will improve this."
+      : undefined;
+
+  const cacheReuseTone =
+    cache.reuse_ratio >= 10 ? "good" : cache.reuse_ratio >= 3 ? "warn" : "bad";
+  const cacheReuseAdvice =
+    cache.reuse_ratio < 3
+      ? "Each cached block is barely re-read — cache writes are barely paying off. Longer or more repetitive sessions would help."
+      : cache.reuse_ratio < 10
+      ? "Cache re-use is moderate. Steady improvement as sessions grow longer."
+      : undefined;
+
+  // Tool density
+  const toolPctTone =
+    efficiency.tool_call_pct <= 85 ? "good" : efficiency.tool_call_pct <= 95 ? "warn" : "bad";
+  const toolPctAdvice =
+    efficiency.tool_call_pct > 95
+      ? "Almost every LLM call is a tool call — the model spends very little time giving final answers. This is normal for complex coding tasks but watch for unnecessary tool loops."
+      : efficiency.tool_call_pct > 85
+      ? "High tool-call density — typical for agentic work, but review if sessions feel sluggish."
+      : undefined;
+
+  const avgToolsTone =
+    efficiency.avg_tools_per_api_call <= 8 ? "good" : efficiency.avg_tools_per_api_call <= 20 ? "warn" : "bad";
+  const avgToolsAdvice =
+    efficiency.avg_tools_per_api_call > 20
+      ? "Very high tool calls per round-trip — consider whether some tools could be batched or are being called redundantly."
+      : undefined;
+
+  // Output ratio
+  const outputTone =
+    efficiency.output_ratio_pct >= 0.5 ? "good" : efficiency.output_ratio_pct >= 0.1 ? "warn" : "bad";
+  const outputAdvice =
+    efficiency.output_ratio_pct < 0.1
+      ? "Extremely low output ratio — the model spends almost all tokens reading context and calling tools, generating very little text. May indicate over-verbose system prompts or excessive tool round-trips."
+      : efficiency.output_ratio_pct < 0.5
+      ? "Low output ratio — typical for heavy coding/tool workflows."
+      : undefined;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-xs text-muted-foreground font-mondwest normal-case">System health insights</p>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <InsightCard
+          label="Cache hit rate"
+          value={`${cache.hit_pct}%`}
+          tone={cacheHitTone}
+          detail={`${formatTokens(cache.total_read_tokens)} tokens served from cache out of ${formatTokens(cache.total_read_tokens + cache.total_write_tokens)} total context.`}
+          advice={cacheHitAdvice}
+        />
+        <InsightCard
+          label="Cache reuse"
+          value={`${cache.reuse_ratio}×`}
+          tone={cacheReuseTone}
+          detail={`Each cached block was re-read ~${cache.reuse_ratio} times on average. Higher is better — it means the cache investment pays off across more turns.`}
+          advice={cacheReuseAdvice}
+        />
+        <InsightCard
+          label="Tool-call density"
+          value={`${efficiency.tool_call_pct}%`}
+          tone={toolPctTone}
+          detail={`${efficiency.tool_call_pct}% of API calls ended in tool invocations (not final replies). ${efficiency.stop_api_calls} calls were final-reply stops.`}
+          advice={toolPctAdvice}
+        />
+        <InsightCard
+          label="Avg tools / call"
+          value={String(efficiency.avg_tools_per_api_call)}
+          tone={avgToolsTone}
+          detail={`${efficiency.total_tool_call_events.toLocaleString()} total tool events across ${efficiency.total_api_calls} API calls.`}
+          advice={avgToolsAdvice}
+        />
+        <InsightCard
+          label="Output ratio"
+          value={`${efficiency.output_ratio_pct}%`}
+          tone={outputTone}
+          detail={`${formatTokens(efficiency.total_output_tokens)} output tokens vs ${formatTokens(data.totals.total_context_tokens)} total context. Avg ${formatTokens(efficiency.avg_output_per_call)} tokens per API call.`}
+          advice={outputAdvice}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Top sessions table
+// ---------------------------------------------------------------------------
+
+function TopSessionsTable({ sessions }: { sessions: MempalaceSessionEntry[] }) {
+  const { sorted, sortKey, sortDir, toggle } = useTableSort(sessions, "total_context_tokens", "desc");
+  if (sessions.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs text-muted-foreground font-mondwest normal-case">
+        Heaviest sessions (top 10 by context tokens)
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full font-mondwest normal-case text-sm">
+          <thead>
+            <tr className="border-b border-border text-muted-foreground text-xs">
+              <SortHeader label="Session" col="session_id" sortKey={sortKey} sortDir={sortDir} toggle={toggle} className="text-left py-2 pr-4 font-medium" />
+              <SortHeader label="Date" col="date" sortKey={sortKey} sortDir={sortDir} toggle={toggle} className="text-left py-2 pr-4 font-medium" />
+              <SortHeader label="Context" col="total_context_tokens" sortKey={sortKey} sortDir={sortDir} toggle={toggle} className="text-right py-2 px-3 font-medium" />
+              <SortHeader label="Cache %" col="cache_hit_pct" sortKey={sortKey} sortDir={sortDir} toggle={toggle} className="text-right py-2 px-3 font-medium" />
+              <SortHeader label="API calls" col="api_calls" sortKey={sortKey} sortDir={sortDir} toggle={toggle} className="text-right py-2 px-3 font-medium" />
+              <SortHeader label="Tools" col="tool_calls" sortKey={sortKey} sortDir={sortDir} toggle={toggle} className="text-right py-2 pl-3 font-medium" />
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((s) => (
+              <tr key={s.session_id} className="border-b border-border/50 hover:bg-secondary/20 transition-colors">
+                <td className="py-2 pr-4">
+                  <span className="font-mono-ui text-xs text-muted-foreground">{s.session_id.slice(-8)}</span>
+                </td>
+                <td className="py-2 pr-4 text-xs text-muted-foreground">{s.date}</td>
+                <td className="text-right py-2 px-3">
+                  <span className="text-amber-400">{formatTokens(s.total_context_tokens)}</span>
+                </td>
+                <td className="text-right py-2 px-3">
+                  <span className={s.cache_hit_pct >= 85 ? "text-emerald-400" : s.cache_hit_pct >= 60 ? "text-yellow-400" : "text-destructive"}>
+                    {s.cache_hit_pct}%
+                  </span>
+                </td>
+                <td className="text-right py-2 px-3 text-muted-foreground">{s.api_calls}</td>
+                <td className="text-right py-2 pl-3 text-muted-foreground">{s.tool_calls.toLocaleString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function overheadTone(pct: number): string {
   if (pct >= 20) return "text-destructive";
   if (pct >= 10) return "text-yellow-400";
@@ -627,6 +812,11 @@ function MempalacePanel({ days }: { days: number }) {
               </span>
             </div>
 
+            {/* System health insight cards */}
+            {data.cache && data.efficiency && (
+              <InsightCards data={data} />
+            )}
+
             {/* % of daily tokens histogram — primary chart */}
             {data.daily.filter((d) => d.total_context_tokens > 0).length > 0 && (
               <div>
@@ -660,6 +850,11 @@ function MempalacePanel({ days }: { days: number }) {
                 <p className="text-xs text-muted-foreground mb-2 font-mondwest normal-case">Tool call token cost</p>
                 <MempalaceToolTable tools={data.tools} />
               </div>
+            )}
+
+            {/* Top sessions table */}
+            {data.top_sessions && data.top_sessions.length > 0 && (
+              <TopSessionsTable sessions={data.top_sessions} />
             )}
           </div>
         )}

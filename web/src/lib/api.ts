@@ -94,6 +94,8 @@ export const api = {
     fetchJSON<ModelsAnalyticsResponse>(`/api/analytics/models?days=${days}`),
   getMempalaceAnalytics: (days: number) =>
     fetchJSON<MempalaceAnalyticsResponse>(`/api/analytics/mempalace?days=${days}`),
+  getEfficiencyAnalytics: (days: number) =>
+    fetchJSON<EfficiencyAnalyticsResponse>(`/api/analytics/efficiency?days=${days}`),
   getConfig: () => fetchJSON<Record<string, unknown>>("/api/config"),
   getDefaults: () => fetchJSON<Record<string, unknown>>("/api/config/defaults"),
   getSchema: () => fetchJSON<{ fields: Record<string, unknown>; category_order: string[] }>("/api/config/schema"),
@@ -526,6 +528,17 @@ export interface MempalaceDailyEntry {
   mem_pct: number;
 }
 
+export interface MempalaceSessionEntry {
+  session_id: string;
+  date: string;
+  total_context_tokens: number;
+  cache_hit_pct: number;
+  output_tokens: number;
+  api_calls: number;
+  tool_calls: number;
+  turns: number;
+}
+
 export interface MempalaceAnalyticsResponse {
   period_days: number;
   totals: {
@@ -539,6 +552,23 @@ export interface MempalaceAnalyticsResponse {
     total_mem_ctx_tokens: number;
     mem_overhead_pct: number;
   };
+  cache: {
+    hit_pct: number;
+    reuse_ratio: number;
+    total_read_tokens: number;
+    total_write_tokens: number;
+  };
+  efficiency: {
+    total_api_calls: number;
+    total_tool_call_events: number;
+    avg_tools_per_api_call: number;
+    tool_call_pct: number;
+    stop_api_calls: number;
+    total_output_tokens: number;
+    output_ratio_pct: number;
+    avg_output_per_call: number;
+  };
+  top_sessions: MempalaceSessionEntry[];
   tools: MempalaceToolEntry[];
   daily: MempalaceDailyEntry[];
 }
