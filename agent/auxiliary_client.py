@@ -4382,7 +4382,25 @@ _DEFAULT_AUX_TIMEOUT = 30.0
 
 
 def _get_auxiliary_task_config(task: str) -> Dict[str, Any]:
-    """Return the config dict for auxiliary.<task>, or {} when unavailable."""
+    """Return the config dict for auxiliary.<task>, or {} when unavailable.
+
+    Resolution order (last value wins, task-specific config overrides default):
+      1. ``auxiliary.default`` — shared fallback for all tasks.
+      2. ``auxiliary.<task>``  — per-task overrides; any key set here wins over
+         the default.
+
+    Setting ``auxiliary.default`` is the recommended way to configure a custom
+    LLM endpoint for all side tasks without repeating the same block 11 times.
+    Example::
+
+        auxiliary:
+          default:
+            provider: custom
+            model: claude-sonnet-4-6
+            base_url: http://proxy.example.com/v1/anthropic
+            api_key: wire-proxy
+            api_mode: anthropic_messages
+    """
     if not task:
         return {}
     try:
@@ -4391,8 +4409,17 @@ def _get_auxiliary_task_config(task: str) -> Dict[str, Any]:
     except ImportError:
         return {}
     aux = config.get("auxiliary", {}) if isinstance(config, dict) else {}
-    task_config = aux.get(task, {}) if isinstance(aux, dict) else {}
-    return task_config if isinstance(task_config, dict) else {}
+    if not isinstance(aux, dict):
+        return {}
+    # Merge: default first, then task-specific keys override.
+    default_config = aux.get("default", {})
+    default_config = default_config if isinstance(default_config, dict) else {}
+    task_config = aux.get(task, {})
+    task_config = task_config if isinstance(task_config, dict) else {}
+    if default_config:
+        merged = {**default_config, **task_config}
+        return merged
+    return task_config
 
 
 def _get_task_timeout(task: str, default: float = _DEFAULT_AUX_TIMEOUT) -> float:
