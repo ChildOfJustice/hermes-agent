@@ -101,6 +101,11 @@ def _build_provider_env_blocklist() -> frozenset:
         pass
 
     blocked.update({
+        # S-18: SUDO_PASSWORD explicitly listed even though the OPTIONAL_ENV_VARS
+        # scan already includes it via category="setting" + password=True. The
+        # explicit entry makes the protection visible at audit time and survives
+        # any future refactor of the metadata scan.
+        "SUDO_PASSWORD",
         "OPENAI_BASE_URL",
         "OPENAI_API_KEY",
         "OPENAI_API_BASE",

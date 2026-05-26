@@ -140,6 +140,35 @@ def _get_lock(pkg: str) -> threading.Lock:
         return lock
 
 
+def _lsp_auto_install_allowed() -> bool:
+    """Track 4 mitigation: opt-out gate for runtime LSP installation.
+
+    Returns ``True`` when LSP auto-install is allowed, ``False`` when the
+    operator has disabled it. Default is ``True`` (current behavior) so
+    interactive `hermes` users don't regress; hardened container builds
+    flip this to ``False`` via config.yaml or env so a misbehaving project
+    can't trigger npm/pip/go installs at runtime.
+
+    Disable with:
+      lsp.auto_install: false           (config.yaml)
+      HERMES_LSP_AUTO_INSTALL=false     (env)
+    """
+    env_val = os.environ.get("HERMES_LSP_AUTO_INSTALL", "").strip().lower()
+    if env_val in {"false", "0", "no", "off"}:
+        return False
+    if env_val in {"true", "1", "yes", "on"}:
+        return True
+    try:
+        from hermes_cli.config import load_config
+        cfg = load_config() or {}
+        lsp_cfg = cfg.get("lsp", {}) if isinstance(cfg, dict) else {}
+        if "auto_install" in lsp_cfg:
+            return bool(lsp_cfg["auto_install"])
+    except Exception:
+        pass
+    return True
+
+
 def try_install(pkg: str, strategy: str = "auto") -> Optional[str]:
     """Try to install ``pkg`` and return the binary path if successful.
 
@@ -150,6 +179,11 @@ def try_install(pkg: str, strategy: str = "auto") -> Optional[str]:
     The install is cached per-package — a second call returns the
     same path (or ``None``) without reinstalling.  Concurrent calls
     are serialized.
+
+    Track 4 mitigation: when ``lsp.auto_install`` is set to ``false`` in
+    config.yaml (or HERMES_LSP_AUTO_INSTALL=false), runtime installation
+    is suppressed. We still probe PATH so pre-installed LSPs (baked into
+    the container image) are picked up; we just don't fetch new ones.
     """
     if strategy not in {"auto",}:
         # Only ``auto`` triggers an actual install.  In manual/off,
@@ -157,6 +191,18 @@ def try_install(pkg: str, strategy: str = "auto") -> Optional[str]:
         recipe = INSTALL_RECIPES.get(pkg, {})
         bin_name = recipe.get("bin", pkg)
         return _existing_binary(bin_name)
+
+    if not _lsp_auto_install_allowed():
+        # Hardened mode: probe PATH only, never install.
+        recipe = INSTALL_RECIPES.get(pkg, {})
+        bin_name = recipe.get("bin", pkg)
+        existing = _existing_binary(bin_name)
+        if existing is None:
+            logger.info(
+                "[install] %s not found and lsp.auto_install=false — "
+                "pre-install in the container image to enable.", pkg,
+            )
+        return existing
 
     if pkg in _install_results:
         return _install_results[pkg]
@@ -233,7 +279,14 @@ def _install_npm(
             " ".join(install_targets),
         )
         proc = subprocess.run(
-            [npm, "install", "--prefix", str(staging), "--silent", "--no-fund", "--no-audit", *install_targets],
+            [npm, "install", "--prefix", str(staging),
+             "--silent", "--no-fund", "--no-audit",
+             # S-10 / Track 4 mitigation: never run npm install scripts for
+             # LSP packages. The agent only needs the binaries, not the
+             # postinstall behavior; this blocks supply-chain compromise via
+             # malicious lifecycle scripts.
+             "--ignore-scripts",
+             *install_targets],
             check=False,
             capture_output=True,
             text=True,

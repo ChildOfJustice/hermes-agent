@@ -96,10 +96,10 @@ class TestAllowlist:
                     f"{feature}: spec {spec!r} fails safety check"
 
     def test_feature_install_command_returns_pip_invocation(self):
-        cmd = ld.feature_install_command("memory.honcho")
+        cmd = ld.feature_install_command("provider.anthropic")
         assert cmd is not None
         assert cmd.startswith("uv pip install")
-        assert "honcho-ai" in cmd
+        assert "anthropic" in cmd
 
     def test_feature_install_command_unknown(self):
         assert ld.feature_install_command("not.real") is None
@@ -306,26 +306,27 @@ class TestActiveFeatures:
         assert ld.active_features() == []
 
     def test_finds_features_with_at_least_one_package_installed(self, monkeypatch):
-        # Pretend only honcho-ai is installed; nothing else.
+        # Pretend only the native Anthropic SDK is installed; nothing else.
         monkeypatch.setattr(
             ld, "_is_present",
-            lambda spec: ld._pkg_name_from_spec(spec) == "honcho-ai",
+            lambda spec: ld._pkg_name_from_spec(spec) == "anthropic",
         )
         active = ld.active_features()
-        assert "memory.honcho" in active
+        assert "provider.anthropic" in active
         # Backends the user never enabled stay quiet.
-        assert "memory.hindsight" not in active
-        assert "platform.slack" not in active
+        assert "provider.bedrock" not in active
+        assert "tool.dashboard" not in active
 
     def test_multi_package_feature_active_if_any_present(self, monkeypatch):
-        # platform.slack has 3 packages; only one needs to be present
-        # for the feature to count as active (user activated it before,
-        # one transitive may have been uninstalled separately).
+        # tool.dashboard has 2 packages (fastapi + uvicorn); only one needs
+        # to be present for the feature to count as active (the user
+        # activated it before, a transitive may have been uninstalled
+        # separately).
         monkeypatch.setattr(
             ld, "_is_present",
-            lambda spec: ld._pkg_name_from_spec(spec) == "slack-bolt",
+            lambda spec: ld._pkg_name_from_spec(spec) == "fastapi",
         )
-        assert "platform.slack" in ld.active_features()
+        assert "tool.dashboard" in ld.active_features()
 
 
 class TestRefreshActiveFeatures:

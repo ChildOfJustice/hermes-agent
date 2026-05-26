@@ -645,6 +645,48 @@ class APIServerAdapter(BasePlatformAdapter):
             raw_port = os.getenv("API_SERVER_PORT", str(DEFAULT_PORT))
         self._port: int = _coerce_port(raw_port, DEFAULT_PORT)
         self._api_key: str = extra.get("key", os.getenv("API_SERVER_KEY", ""))
+        # S-20 mitigation: when no key is configured and the host binds to a
+        # loopback interface, optionally auto-generate a random key. This
+        # prevents SSRF (e.g. an attacker that lures `web_extract` into
+        # hitting http://127.0.0.1:8642/...) from reaching the API. Opt-in
+        # because the TUI/dashboard/cron processes currently rely on
+        # unauthenticated localhost access; flip the flag once they all read
+        # the auto-generated key from a shared file.
+        #
+        # Enable with:
+        #   platforms.api_server.auto_generate_key: true   (config.yaml)
+        #   HERMES_API_SERVER_AUTO_KEY=1                   (env)
+        _auto_key_cfg = bool(extra.get("auto_generate_key", False))
+        _auto_key_env = os.getenv("HERMES_API_SERVER_AUTO_KEY", "").strip().lower() in {
+            "1", "true", "yes", "on",
+        }
+        if not self._api_key and (_auto_key_cfg or _auto_key_env):
+            import secrets as _secrets
+            from pathlib import Path as _Path
+            self._api_key = _secrets.token_urlsafe(32)
+            try:
+                # Persist so sibling processes (TUI, dashboard, cron) can read it.
+                from hermes_constants import get_hermes_home as _ghh
+                _key_path = _Path(_ghh()) / "api_server.key"
+                _key_path.parent.mkdir(parents=True, exist_ok=True)
+                _key_path.write_text(self._api_key + "\n", encoding="utf-8")
+                try:
+                    _key_path.chmod(0o600)
+                except Exception:
+                    pass
+                logger.warning(
+                    "[%s] Auto-generated API_SERVER_KEY (32 bytes urlsafe). "
+                    "Written to %s; load it from there in sibling processes.",
+                    Platform.API_SERVER.value, _key_path,
+                )
+            except Exception:
+                # Fall back to logging only — never crash startup over the
+                # persistence step.
+                logger.warning(
+                    "[%s] Auto-generated API_SERVER_KEY but failed to persist "
+                    "to disk; key only lives in this process memory.",
+                    Platform.API_SERVER.value,
+                )
         self._cors_origins: tuple[str, ...] = self._parse_cors_origins(
             extra.get("cors_origins", os.getenv("API_SERVER_CORS_ORIGINS", "")),
         )
@@ -924,8 +966,18 @@ class APIServerAdapter(BasePlatformAdapter):
 
         Returns gateway state, connected platforms, PID, and uptime so the
         dashboard can display full status without needing a shared PID file or
-        /proc access.  No authentication required.
+        /proc access.
+
+        S-16 mitigation: detailed status leaks process information (PID,
+        connected platforms, active agent count) that's useful for
+        reconnaissance. Gate behind the same API key check as /v1/* so only
+        authenticated callers can read it. Basic /health (up/down) remains
+        unauthenticated for orchestrator probes.
         """
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
         from gateway.status import read_runtime_status
 
         runtime = read_runtime_status() or {}

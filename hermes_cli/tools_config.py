@@ -2061,9 +2061,13 @@ def _detect_active_provider_index(providers: list, config: dict) -> int:
 
 
 def _fal_model_catalog():
-    """Lazy-load the FAL model catalog from the tool module."""
-    from tools.image_generation_tool import FAL_MODELS, DEFAULT_MODEL
-    return FAL_MODELS, DEFAULT_MODEL
+    """Lazy-load the FAL model catalog from the tool module.
+
+    Image generation was removed in the programmer-focus trim. This stub
+    keeps the symbol around for any picker callers but returns an empty
+    catalog so they degrade gracefully instead of ImportError-ing.
+    """
+    return {}, None
 
 
 IMAGEGEN_BACKENDS = {

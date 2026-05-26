@@ -102,92 +102,10 @@ class TestDoctorEnvFileEncoding:
             doctor_mod.run_doctor(Namespace(fix=False))
 
 
-class TestDoctorToolAvailabilityOverrides:
-    def test_marks_honcho_available_when_configured(self, monkeypatch):
-        monkeypatch.setattr(doctor, "_honcho_is_configured_for_doctor", lambda: True)
+# NOTE: TestDoctorToolAvailabilityOverrides and TestHonchoDoctorConfigDetection
+# were removed in the programmer-focus trim refactor — honcho/mem0 plugins
+# are no longer bundled.
 
-        available, unavailable = doctor._apply_doctor_tool_availability_overrides(
-            [],
-            [{"name": "honcho", "env_vars": [], "tools": ["query_user_context"]}],
-        )
-
-        assert available == ["honcho"]
-        assert unavailable == []
-
-    def test_leaves_honcho_unavailable_when_not_configured(self, monkeypatch):
-        monkeypatch.setattr(doctor, "_honcho_is_configured_for_doctor", lambda: False)
-
-        honcho_entry = {"name": "honcho", "env_vars": [], "tools": ["query_user_context"]}
-        available, unavailable = doctor._apply_doctor_tool_availability_overrides(
-            [],
-            [honcho_entry],
-        )
-
-        assert available == []
-        assert unavailable == [honcho_entry]
-
-    def test_marks_kanban_available_only_when_missing_worker_env_gate(self, monkeypatch):
-        monkeypatch.setattr(doctor, "_honcho_is_configured_for_doctor", lambda: False)
-        monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
-
-        available, unavailable = doctor._apply_doctor_tool_availability_overrides(
-            [],
-            [{"name": "kanban", "env_vars": [], "tools": ["kanban_show"]}],
-        )
-
-        assert available == ["kanban"]
-        assert unavailable == []
-
-    def test_leaves_kanban_unavailable_when_worker_env_is_set(self, monkeypatch):
-        monkeypatch.setenv("HERMES_KANBAN_TASK", "probe")
-        kanban_entry = {"name": "kanban", "env_vars": [], "tools": ["kanban_show"]}
-
-        available, unavailable = doctor._apply_doctor_tool_availability_overrides(
-            [],
-            [kanban_entry],
-        )
-
-        assert available == []
-        assert unavailable == [kanban_entry]
-
-    def test_leaves_non_worker_kanban_failure_unavailable(self, monkeypatch):
-        monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
-        kanban_entry = {"name": "kanban", "env_vars": [], "tools": ["kanban_show", "not_a_kanban_tool"]}
-
-        available, unavailable = doctor._apply_doctor_tool_availability_overrides(
-            [],
-            [kanban_entry],
-        )
-
-        assert available == []
-        assert unavailable == [kanban_entry]
-
-    def test_kanban_doctor_detail_explains_worker_gate(self, monkeypatch):
-        monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
-
-        assert doctor._doctor_tool_availability_detail("kanban") == "(runtime-gated; loaded only for dispatcher-spawned workers)"
-
-
-class TestHonchoDoctorConfigDetection:
-    def test_reports_configured_when_enabled_with_api_key(self, monkeypatch):
-        fake_config = SimpleNamespace(enabled=True, api_key="***")
-
-        monkeypatch.setattr(
-            "plugins.memory.honcho.client.HonchoClientConfig.from_global_config",
-            lambda: fake_config,
-        )
-
-        assert doctor._honcho_is_configured_for_doctor()
-
-    def test_reports_not_configured_without_api_key(self, monkeypatch):
-        fake_config = SimpleNamespace(enabled=True, api_key="")
-
-        monkeypatch.setattr(
-            "plugins.memory.honcho.client.HonchoClientConfig.from_global_config",
-            lambda: fake_config,
-        )
-
-        assert not doctor._honcho_is_configured_for_doctor()
 
 
 def test_run_doctor_sets_interactive_env_for_tool_checks(monkeypatch, tmp_path):
@@ -338,22 +256,9 @@ class TestDoctorMemoryProviderSection:
         assert "Honcho API key" not in out
         assert "Mem0" not in out
 
-    def test_honcho_provider_not_installed_shows_fail(self, monkeypatch, tmp_path):
-        # Make honcho import fail
-        monkeypatch.setitem(
-            sys.modules, "plugins.memory.honcho.client", None
-        )
-        out = self._run_doctor_and_capture(monkeypatch, tmp_path, provider="honcho")
-        assert "Memory Provider" in out
-        # Should show failure since honcho is set but not importable
-        assert "Built-in memory active" not in out
-
-    def test_mem0_provider_not_installed_shows_fail(self, monkeypatch, tmp_path):
-        # Make mem0 import fail
-        monkeypatch.setitem(sys.modules, "plugins.memory.mem0", None)
-        out = self._run_doctor_and_capture(monkeypatch, tmp_path, provider="mem0")
-        assert "Memory Provider" in out
-        assert "Built-in memory active" not in out
+    # NOTE: test_honcho_provider_not_installed_shows_fail and
+    # test_mem0_provider_not_installed_shows_fail were removed —
+    # those plugins are no longer bundled.
 
 
 def test_run_doctor_termux_treats_docker_and_browser_warnings_as_expected(monkeypatch, tmp_path):

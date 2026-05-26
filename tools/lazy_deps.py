@@ -92,75 +92,13 @@ LAZY_DEPS: dict[str, tuple[str, ...]] = {
     "search.firecrawl": ("firecrawl-py==4.17.0",),
     "search.parallel": ("parallel-web==0.4.2",),
 
-    # ─── TTS providers ─────────────────────────────────────────────────────
-    # Pinned to exact versions to match pyproject.toml's no-ranges policy
-    # (see comment at top of [project.dependencies]). When bumping, update
-    # both this map AND the corresponding extra in pyproject.toml.
-    #
-    # NOTE: tts.mistral / stt.mistral entries are intentionally absent —
-    # the `mistralai` PyPI project is quarantined as of 2026-05-12 (Mini
-    # Shai-Hulud worm). Re-add when PyPI restores a clean release; see
-    # comment in pyproject.toml above the (removed) `mistral` extra for
-    # the full restoration checklist.
-    "tts.edge": ("edge-tts==7.2.7",),
-    "tts.elevenlabs": ("elevenlabs==1.59.0",),
-
-    # ─── Speech-to-text providers ──────────────────────────────────────────
-    "stt.faster_whisper": (
-        "faster-whisper==1.2.1",
-        "sounddevice==0.5.5",
-        "numpy==2.4.3",
-    ),
-
-    # ─── Image generation backends ─────────────────────────────────────────
-    "image.fal": ("fal-client==0.13.1",),
-
-    # ─── Memory providers ──────────────────────────────────────────────────
-    "memory.honcho": ("honcho-ai==2.0.1",),
-    "memory.hindsight": ("hindsight-client==0.6.1",),
-
     # ─── Messaging platforms (lazy-installable on demand) ──────────────────
     "platform.telegram": ("python-telegram-bot[webhooks]==22.6",),
-    # brotlicffi gives aiohttp a working 2-arg Decompressor.process() for
-    # Discord CDN's Brotli-encoded attachments. Without it, aiohttp falls
-    # back to google's `Brotli` package (1-arg API), and any .txt/.md/.doc
-    # uploaded to the Discord gateway fails to decode at att.read() with
-    # "Can not decode content-encoding: br" — see #12511 / #15744.
-    "platform.discord": ("discord.py[voice]==2.7.1", "brotlicffi==1.2.0.1"),
-    "platform.slack": (
-        "slack-bolt==1.27.0",
-        "slack-sdk==3.40.1",
-        "aiohttp==3.13.4",  # CVE-2026-34513/34518/34519/34520/34525
-    ),
-    "platform.matrix": (
-        "mautrix[encryption]==0.21.0",
-        "Markdown==3.10.2",
-        "aiosqlite==0.22.1",
-        "asyncpg==0.31.0",
-        "aiohttp-socks==0.11.0",
-    ),
-    "platform.dingtalk": (
-        "dingtalk-stream==0.24.3",
-        "alibabacloud-dingtalk==2.2.42",
-        "qrcode==7.4.2",
-    ),
-    "platform.feishu": (
-        "lark-oapi==1.5.3",
-        "qrcode==7.4.2",
-    ),
 
     # ─── Terminal backends ─────────────────────────────────────────────────
     "terminal.modal": ("modal==1.3.4",),
     "terminal.daytona": ("daytona==0.155.0",),
     "terminal.vercel": ("vercel==0.5.7",),
-
-    # ─── Skills ────────────────────────────────────────────────────────────
-    "skill.google_workspace": (
-        "google-api-python-client==2.194.0",
-        "google-auth-oauthlib==1.3.1",
-        "google-auth-httplib2==0.3.1",
-    ),
-    "skill.youtube": ("youtube-transcript-api==1.2.4",),
 
     # ─── Tools ─────────────────────────────────────────────────────────────
     # ACP adapter (VS Code / Zed / JetBrains integration)

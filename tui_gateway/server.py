@@ -663,6 +663,28 @@ def _load_cfg() -> dict:
         with _cfg_lock:
             if _cfg_cache is not None and _cfg_mtime == mtime and _cfg_path == p:
                 return copy.deepcopy(_cfg_cache)
+        # S-04 defense-in-depth: warn (once per mtime) when config.yaml has
+        # overly permissive UNIX mode. Group/other write or other-read on a
+        # file that contains shell-templates and quick_command definitions is
+        # a privilege escalation surface in multi-user deployments.
+        if p.exists():
+            try:
+                _st = p.stat()
+                _mode = _st.st_mode & 0o777
+                # 0o600 is the recommended mode. Anything looser triggers a
+                # one-shot warning to stderr; we don't refuse to load because
+                # single-user container deployments often run as root with
+                # default umasks that produce 0o644.
+                if (_mode & 0o077) and not getattr(_load_cfg, "_perm_warned_mtime", None) == mtime:
+                    sys.stderr.write(
+                        f"[hermes:tui_gateway] WARNING: {p} mode is {oct(_mode)}; "
+                        f"recommend `chmod 0600 {p}` (the file holds shell-template "
+                        f"quick_commands and is loaded with shell=True).\n"
+                    )
+                    sys.stderr.flush()
+                    _load_cfg._perm_warned_mtime = mtime  # type: ignore[attr-defined]
+            except Exception:
+                pass
         if p.exists():
             with open(p, encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
@@ -4730,6 +4752,26 @@ def _(rid, params: dict) -> dict:
     session = _sessions.get(params.get("session_id", ""))
 
     qcmds = _load_cfg().get("quick_commands", {})
+    # S-04 mitigation: allow operators to disable shell-based quick_commands
+    # entirely for hardened deployments. The quick_command runner invokes
+    # subprocess with shell=True against a config-loaded template, so an
+    # attacker who can write ~/.hermes/config.yaml gains arbitrary code
+    # execution on the next quick_command invocation. Set
+    #   security.disable_quick_commands: true
+    # in config.yaml (or HERMES_DISABLE_QUICK_COMMANDS=1) to refuse all
+    # quick_command dispatches.
+    _cfg = _load_cfg()
+    _sec = _cfg.get("security", {}) if isinstance(_cfg, dict) else {}
+    _qc_disabled = bool(_sec.get("disable_quick_commands", False)) or (
+        os.environ.get("HERMES_DISABLE_QUICK_COMMANDS", "").strip()
+        in {"1", "true", "yes", "on"}
+    )
+    if _qc_disabled and name in qcmds:
+        return _err(
+            rid,
+            4006,
+            "quick_commands are disabled by security.disable_quick_commands",
+        )
     if name in qcmds:
         qc = qcmds[name]
         if qc.get("type") == "exec":
@@ -6749,7 +6791,15 @@ def _(rid, params: dict) -> dict:
                 rid, 4005, f"blocked: {desc}. Use the agent for dangerous commands."
             )
     except ImportError:
-        pass
+        # S-03 mitigation: fail closed. If the dangerous-command guard cannot
+        # be loaded we MUST refuse the command rather than running it. Previous
+        # behavior silently disabled the guard, which made the system fail-open
+        # under any import-error condition (incl. partial install, broken venv).
+        return _err(
+            rid,
+            4005,
+            "guard unavailable — command refused (tools.approval missing)",
+        )
     try:
         r = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, timeout=30, cwd=os.getcwd()

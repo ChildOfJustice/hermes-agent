@@ -1105,7 +1105,29 @@ def _add_column_if_missing(
     Swallows ``duplicate column name`` errors so a concurrent connection
     that ran the same migration first does not crash the dispatcher tick
     (issue #21708).
+
+    S-13 mitigation: ``table`` and ``ddl`` are interpolated into SQL via
+    f-string because SQLite parameters cannot bind identifiers. We validate
+    both inputs against strict allow-lists before execution so the call
+    cannot become a SQL-injection sink even if a future caller forwards
+    user-controlled values.
     """
+    # Allow-list: only the tables we actually migrate. Adding a new table
+    # to this module also requires extending the set.
+    _ALLOWED_TABLES = {"tasks", "task_events"}
+    if table not in _ALLOWED_TABLES:
+        raise ValueError(f"_add_column_if_missing: refusing unknown table {table!r}")
+    # DDL must look like ``<identifier> <TYPE> [<modifiers>]`` and contain
+    # no statement terminators, comments, or whitespace tricks. Allows
+    # standard SQLite column DDL fragments such as
+    # ``INTEGER NOT NULL DEFAULT 0`` or ``TEXT NOT NULL DEFAULT 'scratch'``.
+    if not re.fullmatch(
+        r"[a-zA-Z_][a-zA-Z0-9_]{0,63}\s+"  # column identifier
+        r"[A-Z]+"                             # base type (TEXT/INTEGER/REAL/BLOB/BOOLEAN/TIMESTAMP)
+        r"(\s+(NOT\s+NULL|NULL|DEFAULT\s+(\d+|'[^';]*')|UNIQUE))*",
+        ddl,
+    ):
+        raise ValueError(f"_add_column_if_missing: refusing suspicious ddl {ddl!r}")
     try:
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
         return True

@@ -752,9 +752,39 @@ class HermesACPAgent(acp.Agent):
         state: SessionState,
         mcp_servers: list[McpServerStdio | McpServerHttp | McpServerSse] | None,
     ) -> None:
-        """Register ACP-provided MCP servers and refresh the agent tool surface."""
+        """Register ACP-provided MCP servers and refresh the agent tool surface.
+
+        S-12 mitigation: ACP clients can push arbitrary MCP server configs
+        (stdio/HTTP/SSE) into the live agent. Each pushed config is logged
+        at WARNING level so the operator audit trail captures the command,
+        args (sans env values), and transport type. Env *names* are logged;
+        env *values* are not, to avoid leaking tokens passed via ACP.
+        """
         if not mcp_servers:
             return
+
+        # S-12 audit log: emit a structured record of every ACP-pushed server.
+        for _s in mcp_servers:
+            try:
+                if isinstance(_s, McpServerStdio):
+                    logger.warning(
+                        "[S-12 acp_mcp_push] session=%s name=%s transport=stdio "
+                        "command=%r args=%r env_keys=%r",
+                        state.session_id, _s.name, _s.command,
+                        list(_s.args),
+                        [item.name for item in _s.env],
+                    )
+                else:
+                    logger.warning(
+                        "[S-12 acp_mcp_push] session=%s name=%s transport=%s "
+                        "url=%r header_keys=%r",
+                        state.session_id, _s.name, type(_s).__name__.lower(),
+                        getattr(_s, "url", "<unset>"),
+                        [item.name for item in getattr(_s, "headers", [])],
+                    )
+            except Exception:
+                # Never fail registration over the audit log.
+                pass
 
         try:
             from tools.mcp_tool import register_mcp_servers

@@ -518,13 +518,17 @@ class TestHealthDetailedEndpoint:
                 assert data["platforms"] == {}
 
     @pytest.mark.asyncio
-    async def test_health_detailed_does_not_require_auth(self, auth_adapter):
-        """Health detailed endpoint should be accessible without auth, like /health."""
+    async def test_health_detailed_requires_auth(self, auth_adapter):
+        """S-16: /health/detailed leaks runtime detail (model, provider,
+        tools, plugin status) — it now requires auth when an auth key is
+        configured, unlike the plain /health endpoint which stays open
+        for load balancer probes.
+        """
         app = _create_app(auth_adapter)
         with patch("gateway.status.read_runtime_status", return_value=None):
             async with TestClient(TestServer(app)) as cli:
                 resp = await cli.get("/health/detailed")
-                assert resp.status == 200
+                assert resp.status == 401
 
 
 # ---------------------------------------------------------------------------

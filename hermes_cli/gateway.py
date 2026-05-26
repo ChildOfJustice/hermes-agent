@@ -3982,8 +3982,12 @@ def _setup_dingtalk():
 
     if method == 0:
         # ── QR-code device-flow authorization ──
+        # NOTE: The dingtalk_auth QR helper was removed in the programmer-focus
+        # trim refactor (DingTalk platform is no longer supported). Always fall
+        # back to manual input so this code path stays functional in case the
+        # platform is ever re-enabled out-of-tree.
         try:
-            from hermes_cli.dingtalk_auth import dingtalk_qr_auth
+            from hermes_cli.dingtalk_auth import dingtalk_qr_auth  # noqa: F401  (removed)
         except ImportError as exc:
             print_warning(f"  QR auth module failed to load ({exc}), falling back to manual input.")
             _setup_standard_platform(dingtalk_platform)
@@ -4734,7 +4738,6 @@ def _builtin_setup_fn(key: str):
         "matrix": _s._setup_matrix,
         "mattermost": _s._setup_mattermost,
         "bluebubbles": _s._setup_bluebubbles,
-        "webhooks": _s._setup_webhooks,
         "signal": _setup_signal,
         "whatsapp": _setup_whatsapp,
         "weixin": _setup_weixin,

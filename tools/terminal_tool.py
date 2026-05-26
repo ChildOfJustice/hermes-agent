@@ -52,6 +52,33 @@ from utils import env_var_enabled
 logger = logging.getLogger(__name__)
 
 
+# S-18 mitigation: warn once at module-import time if SUDO_PASSWORD is set in
+# the process environment. The plaintext password is then visible to any
+# same-uid process via /proc/<pid>/environ, which is a real exposure in
+# shared-host or compromised-process scenarios. Use the interactive sudo
+# prompt or a dedicated secret store instead. We don't refuse to run because
+# many deployments rely on this for non-interactive sudo.
+def _warn_sudo_password_in_env() -> None:
+    if "SUDO_PASSWORD" not in os.environ:
+        return
+    # Only warn once per process to avoid log spam from re-imports.
+    if getattr(_warn_sudo_password_in_env, "_warned", False):
+        return
+    logger.warning(
+        "SUDO_PASSWORD is set in the process environment — it is visible to "
+        "any same-uid process via /proc/<pid>/environ. Prefer an interactive "
+        "sudo prompt or a dedicated secret store when possible."
+    )
+    _warn_sudo_password_in_env._warned = True  # type: ignore[attr-defined]
+
+
+try:
+    _warn_sudo_password_in_env()
+except Exception:
+    # Never break terminal_tool import over the warning.
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Global interrupt event: set by the agent when a user interrupt arrives.
 # The terminal tool polls this during command execution so it can kill

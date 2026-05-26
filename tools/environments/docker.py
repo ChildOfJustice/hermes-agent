@@ -629,22 +629,47 @@ class DockerEnvironment(BaseEnvironment):
     def cleanup(self):
         """Stop and remove the container. Bind-mount dirs persist if persistent=True."""
         if self._container_id:
-            try:
-                # Stop in background so cleanup doesn't block
-                stop_cmd = (
-                    f"(timeout 60 {self._docker_exe} stop {self._container_id} || "
-                    f"{self._docker_exe} rm -f {self._container_id}) >/dev/null 2>&1 &"
+            # S-15 mitigation: validate container_id against a strict pattern
+            # before interpolating into subprocess arguments. Docker/podman
+            # container IDs are always [a-zA-Z0-9_.-]+ in practice; refuse
+            # anything else so a corrupted attribute can't become argv
+            # injection.
+            _cid = self._container_id
+            if not isinstance(_cid, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]+", _cid):
+                logger.warning(
+                    "Refusing to stop container with invalid id %r", _cid
                 )
-                subprocess.Popen(stop_cmd, shell=True)
+                return
+            try:
+                # Stop in background so cleanup doesn't block. Use list form
+                # (shell=False) to avoid shell metacharacter interpretation.
+                # Two staggered Popen calls reproduce the prior
+                # "(stop || rm -f) >/dev/null 2>&1 &" behavior without a shell.
+                _devnull = subprocess.DEVNULL
+                subprocess.Popen(
+                    ["timeout", "60", self._docker_exe, "stop", _cid],
+                    stdout=_devnull,
+                    stderr=_devnull,
+                    shell=False,
+                )
             except Exception as e:
-                logger.warning("Failed to stop container %s: %s", self._container_id, e)
+                logger.warning("Failed to stop container %s: %s", _cid, e)
 
             if not self._persistent:
-                # Also schedule removal (stop only leaves it as stopped)
+                # Also schedule removal (stop only leaves it as stopped).
+                # Detach via Popen + sleep helper rather than a shell &.
                 try:
+                    _rm_script = (
+                        f"import subprocess, time;"
+                        f"time.sleep(3);"
+                        f"subprocess.run([{self._docker_exe!r}, 'rm', '-f', {_cid!r}],"
+                        f" stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)"
+                    )
                     subprocess.Popen(
-                        f"sleep 3 && {self._docker_exe} rm -f {self._container_id} >/dev/null 2>&1 &",
-                        shell=True,
+                        [sys.executable, "-c", _rm_script],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        shell=False,
                     )
                 except Exception:
                     pass

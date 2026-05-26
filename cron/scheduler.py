@@ -89,31 +89,17 @@ def _resolve_cron_enabled_toolsets(job: dict, cfg: dict) -> list[str] | None:
 
 # Valid delivery platforms — used to validate user-supplied platform names
 # in cron delivery targets, preventing env var enumeration via crafted names.
+# Trimmed to the kept platforms in the programmer-focus refactor; all the
+# removed messaging adapters are no longer valid delivery targets.
 _KNOWN_DELIVERY_PLATFORMS = frozenset({
-    "telegram", "discord", "slack", "whatsapp", "signal",
-    "matrix", "mattermost", "homeassistant", "dingtalk", "feishu",
-    "wecom", "wecom_callback", "weixin", "sms", "email", "webhook", "bluebubbles",
-    "qqbot", "yuanbao",
+    "telegram",
 })
 
 # Platforms that support a configured cron/notification home target, mapped to
 # the environment variable used by gateway setup/runtime config.
+# Trimmed to the kept platforms in the programmer-focus refactor.
 _HOME_TARGET_ENV_VARS = {
-    "matrix": "MATRIX_HOME_ROOM",
     "telegram": "TELEGRAM_HOME_CHANNEL",
-    "discord": "DISCORD_HOME_CHANNEL",
-    "slack": "SLACK_HOME_CHANNEL",
-    "signal": "SIGNAL_HOME_CHANNEL",
-    "mattermost": "MATTERMOST_HOME_CHANNEL",
-    "sms": "SMS_HOME_CHANNEL",
-    "email": "EMAIL_HOME_ADDRESS",
-    "dingtalk": "DINGTALK_HOME_CHANNEL",
-    "feishu": "FEISHU_HOME_CHANNEL",
-    "wecom": "WECOM_HOME_CHANNEL",
-    "weixin": "WEIXIN_HOME_CHANNEL",
-    "bluebubbles": "BLUEBUBBLES_HOME_CHANNEL",
-    "qqbot": "QQBOT_HOME_CHANNEL",
-    "whatsapp": "WHATSAPP_HOME_CHANNEL",
 }
 
 # Legacy env var names kept for back-compat.  Each entry is the current
@@ -889,6 +875,44 @@ def _run_job_script(script_path: str) -> tuple[bool, str]:
             run_env["HOME"] = profile_home
     except Exception:
         pass
+
+    # S-11 mitigation: optionally restrict the script's environment so it
+    # does NOT inherit API keys, tokens, or other credentials present in
+    # the cron-runner process. Opt-in to avoid breaking existing cron jobs
+    # that rely on direct API access; the recommended workflow is for cron
+    # scripts to call hermes tools (which keep credentials in-process)
+    # rather than the APIs directly.
+    #
+    # Enable with:
+    #   cron.script_env_whitelist: ["PATH", "HOME", "USER", "TMPDIR", "LANG"]
+    #
+    # or any other list. When the key is present in config.yaml (even if
+    # empty), the env is reduced to a baseline (PATH/HOME/USER/TMPDIR/LANG/
+    # LC_*/HERMES_HOME) plus the whitelisted variables. When the key is
+    # absent, behavior is unchanged.
+    try:
+        from hermes_cli.config import load_config as _load_cfg
+        _cfg = _load_cfg() or {}
+        _cron_cfg = _cfg.get("cron", {}) if isinstance(_cfg, dict) else {}
+        if "script_env_whitelist" in _cron_cfg:
+            _wl_raw = _cron_cfg.get("script_env_whitelist") or []
+            _wl = {str(k) for k in (_wl_raw if isinstance(_wl_raw, list) else [])}
+            _baseline = {
+                "PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "TEMP", "TMP",
+                "LANG", "HERMES_HOME", "SHELL", "PWD",
+            }
+            _allowed = _baseline | _wl
+            _filtered = {
+                k: v for k, v in run_env.items()
+                if k in _allowed or k.startswith("LC_")
+            }
+            # Always preserve the previously-set HERMES_HOME / HOME above.
+            _filtered["HERMES_HOME"] = run_env["HERMES_HOME"]
+            if "HOME" in run_env:
+                _filtered["HOME"] = run_env["HOME"]
+            run_env = _filtered
+    except Exception as _exc:
+        logger.debug("script_env_whitelist eval failed (ignored): %s", _exc)
 
     try:
         popen_kwargs = {"creationflags": windows_hide_flags()} if sys.platform == "win32" else {}

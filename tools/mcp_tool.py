@@ -385,6 +385,31 @@ def _scan_mcp_description(server_name: str, tool_name: str, description: str) ->
     return findings
 
 
+def _get_mcp_injection_action() -> str:
+    """Return the configured action for MCP injection-scanner findings.
+
+    S-09 mitigation: by default the scanner only warns. Hardened deployments
+    can set ``mcp.injection_action: block`` (or HERMES_MCP_INJECTION_ACTION=block)
+    in config.yaml to refuse registration of any MCP tool whose description
+    triggers an injection pattern.
+
+    Returns 'warn' (default) or 'block'.
+    """
+    env_override = os.environ.get("HERMES_MCP_INJECTION_ACTION", "").strip().lower()
+    if env_override in {"warn", "block"}:
+        return env_override
+    try:
+        from hermes_cli.config import load_config
+        cfg = load_config() or {}
+        mcp_cfg = cfg.get("mcp", {}) if isinstance(cfg, dict) else {}
+        action = str(mcp_cfg.get("injection_action", "warn")).strip().lower()
+        if action in {"warn", "block"}:
+            return action
+    except Exception:
+        pass
+    return "warn"
+
+
 def _prepend_path(env: dict, directory: str) -> dict:
     """Prepend *directory* to env PATH if it is not already present."""
     updated = dict(env or {})
@@ -1256,13 +1281,54 @@ class MCPServerTask:
     async def _run_stdio(self, config: dict):
         """Run the server using stdio transport."""
         command = config.get("command")
-        args = config.get("args", [])
+        args = list(config.get("args", []))
         user_env = config.get("env")
 
         if not command:
             raise ValueError(
                 f"MCP server '{self.name}' has no 'command' in config"
             )
+
+        # S-10 mitigation: when launching MCP servers via npx, force
+        # --ignore-scripts and warn on unpinned versions (no @x.y.z) or
+        # @latest. npm package install scripts execute arbitrary code on
+        # download; a malicious dep can compromise the host before our
+        # OSV scan even runs. Effect is scoped to npx invocations — we
+        # don't second-guess users running curated absolute paths.
+        if isinstance(command, str) and os.path.basename(command) == "npx":
+            if "--ignore-scripts" not in args:
+                # Insert before the package spec. npx parses its own flags
+                # leftmost; positional args following are forwarded to the
+                # invoked package.
+                _insert_at = 0
+                for _i, _a in enumerate(args):
+                    # Skip past leading npx flags ('-y', '--yes', '-p', etc).
+                    if isinstance(_a, str) and _a.startswith("-"):
+                        _insert_at = _i + 1
+                        continue
+                    break
+                args.insert(_insert_at, "--ignore-scripts")
+                logger.debug(
+                    "MCP server '%s': injected --ignore-scripts into npx args",
+                    self.name,
+                )
+            # Version-pin audit: complain if the package spec is unpinned.
+            for _a in args:
+                if not isinstance(_a, str) or _a.startswith("-"):
+                    continue
+                # First positional after flags should be the package spec.
+                _spec = _a
+                if "@" in _spec.lstrip("@") and not _spec.endswith("@latest"):
+                    # Looks pinned (e.g. @foo/bar@1.2.3 or pkg@1.2.3) — accept.
+                    pass
+                elif _spec.endswith("@latest") or "@" not in _spec.lstrip("@"):
+                    logger.warning(
+                        "MCP server '%s': npx package spec %r is unpinned "
+                        "(no @x.y.z) — strongly prefer a fixed version to "
+                        "avoid supply-chain rotation. See plan S-10.",
+                        self.name, _spec,
+                    )
+                break
 
         safe_env = _build_safe_env(user_env)
         command, safe_env = _resolve_stdio_command(command, safe_env)
@@ -3081,13 +3147,26 @@ def _register_server_tools(name: str, server: MCPServerTask, config: dict) -> Li
             return tool_name not in exclude_set
         return True
 
+    # S-09 mitigation: optionally refuse to register MCP tools whose
+    # descriptions match the prompt-injection scanner. Default is 'warn'
+    # so existing deployments are unaffected; hardened deployments set
+    # mcp.injection_action: block in config.yaml.
+    _mcp_injection_action = _get_mcp_injection_action()
+
     for mcp_tool in server._tools:
         if not _should_register(mcp_tool.name):
             logger.debug("MCP server '%s': skipping tool '%s' (filtered by config)", name, mcp_tool.name)
             continue
 
         # Scan tool description for prompt injection patterns
-        _scan_mcp_description(name, mcp_tool.name, mcp_tool.description or "")
+        _injection_findings = _scan_mcp_description(name, mcp_tool.name, mcp_tool.description or "")
+        if _injection_findings and _mcp_injection_action == "block":
+            logger.warning(
+                "MCP server '%s': REFUSING to register tool '%s' — "
+                "mcp.injection_action=block and description matches: %s",
+                name, mcp_tool.name, "; ".join(_injection_findings),
+            )
+            continue
 
         schema = _convert_mcp_schema(name, mcp_tool)
         tool_name_prefixed = schema["name"]

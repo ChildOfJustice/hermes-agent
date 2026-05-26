@@ -412,6 +412,27 @@ DANGEROUS_PATTERNS = [
     # into a single -X token. Catches the same threat class.
     (r'\bsudo\b[^;|&\n]*?\s+-[a-z]*[sa][a-z]*\b',
      "sudo with combined-flag privilege escalation"),
+    # S-17 mitigation: read-side exfiltration of credential files via the
+    # terminal tool. The agent's file-read tools already block these via
+    # agent/file_safety.py, but the terminal tool bypasses that layer.
+    # Catch the common exfil patterns (cat / less / head / tail / xxd /
+    # base64 / od / strings / hexdump / grep) reading from the credential
+    # file set we already track for writes (~/.hermes/.env, ~/.ssh/*,
+    # ~/.netrc, ~/.aws/credentials, project .env files, etc.).
+    #
+    # We deliberately use the same _SENSITIVE_WRITE_TARGET / _CREDENTIAL_FILES
+    # / _HERMES_ENV_PATH fragments so a future addition propagates to both
+    # directions automatically.
+    (rf'\b(cat|less|more|head|tail|xxd|base64|od|strings|hexdump|grep|egrep|fgrep|rg|nl|tac)\b[^;|&\n]*\s[\'"]?(?:{_HERMES_ENV_PATH}|{_SSH_SENSITIVE_PATH}|{_CREDENTIAL_FILES})',
+     "read credential/secret file (~/.hermes/.env, ~/.ssh/*, ~/.netrc, etc.)"),
+    # Also catch ~/.hermes/auth.json and similar tokens-bearing files in
+    # the hermes home that aren't covered by _HERMES_ENV_PATH (which is
+    # .env-specific).
+    (r'\b(cat|less|more|head|tail|xxd|base64|od|strings|hexdump|grep|egrep|fgrep|rg|nl|tac)\b[^;|&\n]*\s[\'"]?(?:~|\$home|\$\{home\})/\.hermes/(?:auth\.json|tokens?\.json|credentials?\.json|api_server\.key)',
+     "read hermes auth/token/credentials/api_server.key file"),
+    # And the AWS / GCP / Azure credential file conventions.
+    (r'\b(cat|less|more|head|tail|xxd|base64|od|strings|hexdump|grep|egrep|fgrep|rg|nl|tac)\b[^;|&\n]*\s[\'"]?(?:~|\$home|\$\{home\})/\.(?:aws/(?:credentials|config)|config/gcloud/(?:credentials|application_default_credentials)\.json|azure/(?:credentials|accessTokens\.json))\b',
+     "read cloud-provider credentials file (aws/gcp/azure)"),
 ]
 
 
