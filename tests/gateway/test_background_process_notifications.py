@@ -284,12 +284,10 @@ async def test_inject_watch_notification_routes_from_session_store_origin(monkey
 
 
 @pytest.mark.asyncio
-async def test_agent_notification_carries_message_id_reply_anchor(monkeypatch, tmp_path):
-    """notify_on_complete injection carries the triggering message_id so the
-    synthetic event can be reply-anchored back into a Telegram DM topic.
-
-    Without an anchor, Telegram private-chat topic sends fall back to the main
-    chat (see _thread_kwargs_for_send / telegram_dm_topic_reply_fallback)."""
+async def test_agent_notification_success_skips_llm(monkeypatch, tmp_path):
+    """notify_on_complete with exit_code=0 must NOT invoke handle_message (no LLM
+    call).  Instead, a compact one-liner is sent directly via adapter.send(),
+    preserving the reply anchor (thread_id) via metadata."""
     import tools.process_registry as pr_module
 
     sessions = [SimpleNamespace(
@@ -316,17 +314,64 @@ async def test_agent_notification_carries_message_id_reply_anchor(monkeypatch, t
     }
     await runner._run_process_watcher(watcher)
 
-    adapter.handle_message.assert_awaited_once()
-    synth_event = adapter.handle_message.await_args.args[0]
-    assert synth_event.internal is True
-    assert synth_event.message_id == "555"
-    assert synth_event.source.thread_id == "24296"
+    # Success: NO LLM injection — handle_message must NOT be called.
+    adapter.handle_message.assert_not_awaited()
+    # A compact notice is sent directly to the chat.
+    adapter.send.assert_awaited_once()
+    _chat_id, _text = adapter.send.await_args.args
+    assert _chat_id == "123"
+    assert "sleep 1" in _text
+    assert "exit 0" in _text
+    # thread_id forwarded in metadata
+    _, _kwargs = adapter.send.call_args
+    assert _kwargs.get("metadata") == {"thread_id": "24296"}
 
 
 @pytest.mark.asyncio
-async def test_agent_notification_no_message_id_is_tolerated(monkeypatch, tmp_path):
+async def test_agent_notification_failure_injects_llm(monkeypatch, tmp_path):
+    """notify_on_complete with non-zero exit_code MUST call handle_message so
+    the LLM can diagnose the failure and respond to the user."""
+    import tools.process_registry as pr_module
+
+    sessions = [SimpleNamespace(
+        output_buffer="FATAL: build failed\n", exited=True, exit_code=1,
+        command="./gradlew build",
+    )]
+    monkeypatch.setattr(pr_module, "process_registry", _FakeRegistry(sessions))
+
+    async def _instant_sleep(*_a, **_kw):
+        pass
+    monkeypatch.setattr(asyncio, "sleep", _instant_sleep)
+
+    runner = _build_runner(monkeypatch, tmp_path, "all")
+    adapter = runner.adapters[Platform.TELEGRAM]
+
+    watcher = {
+        "session_id": "proc_fail",
+        "check_interval": 0,
+        "session_key": "agent:main:telegram:dm:123:24296",
+        "platform": "telegram",
+        "chat_id": "123",
+        "thread_id": "24296",
+        "message_id": "666",
+        "notify_on_complete": True,
+    }
+    await runner._run_process_watcher(watcher)
+
+    # Failure: LLM is invoked via handle_message.
+    adapter.handle_message.assert_awaited_once()
+    synth_event = adapter.handle_message.await_args.args[0]
+    assert synth_event.internal is True
+    assert synth_event.message_id == "666"
+    assert synth_event.source.thread_id == "24296"
+    assert "FATAL: build failed" in synth_event.text
+    assert "exit code 1" in synth_event.text
+
+
+@pytest.mark.asyncio
+async def test_agent_notification_no_message_id_success_uses_send(monkeypatch, tmp_path):
     """A watcher dict without message_id (CLI spawn, pre-upgrade checkpoint)
-    still injects — message_id is simply None."""
+    with exit_code=0 sends a compact notice via adapter.send (no LLM call)."""
     import tools.process_registry as pr_module
 
     sessions = [SimpleNamespace(
@@ -352,9 +397,11 @@ async def test_agent_notification_no_message_id_is_tolerated(monkeypatch, tmp_pa
     }
     await runner._run_process_watcher(watcher)
 
-    adapter.handle_message.assert_awaited_once()
-    synth_event = adapter.handle_message.await_args.args[0]
-    assert synth_event.message_id is None
+    adapter.handle_message.assert_not_awaited()
+    adapter.send.assert_awaited_once()
+    _chat_id, _text = adapter.send.await_args.args
+    assert _chat_id == "123"
+    assert "exit 0" in _text
 
 
 @pytest.mark.asyncio
