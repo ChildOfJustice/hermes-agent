@@ -708,47 +708,47 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
     },
     "vibrantink": {
         "name": "vibrantink",
-        "description": "VibrantInk2.0 — pure black canvas, electric lime/orange/purple accent palette",
+        "description": "VibrantInk2.0 — pure black canvas, electric orange accent palette",
         "colors": {
             # Based on VibrantInk2.0 IntelliJ theme by the user.
             # Core palette:
             #   background: #000000 (pure black)
             #   keyword / accent: #FF6600 (electric orange)
-            #   strings / ok:     #66FF00 (electric lime green)
-            #   comments:         #9933CC (purple)
+            #   strings / ok:     #88EE7A (soft light green)
+            #   comments:         #7FA6E8 (light blue, same as deepblue)
             #   numbers / entity: #339999 (muted teal)
             #   class names:      #FFCC00 (golden yellow)
-            #   identifiers:      #9984E3 (lavender purple)
+            #   identifiers:      #7FA6E8 (light blue, same as deepblue)
             #   default text:     #FFFFFF (white)
             #   regex / cyan:     #44B4CC (bright cyan)
             "banner_border":  "#FF6600",          # keyword orange — punchy frame
             "banner_title":   "#FFCC00",          # golden yellow — title pops on black
-            "banner_accent":  "#66FF00",          # electric lime — accent hit
-            "banner_dim":     "#9933CC",          # purple — subdued dividers
+            "banner_accent":  "#88EE7A",          # soft light green — accent hit
+            "banner_dim":     "#7FA6E8",          # light blue — subdued dividers
             "banner_text":    "#FFFFFF",          # pure white text
             "ui_accent":      "#FF6600",          # orange drives interactive cues
             "ui_label":       "#44B4CC",          # cyan labels — readable on black
-            "ui_ok":          "#66FF00",          # lime = success
+            "ui_ok":          "#88EE7A",          # soft light green = success
             "ui_error":       "#FF6767",          # console red from theme
             "ui_warn":        "#FFCC00",          # golden warn
             "prompt":         "#FFFFFF",          # white prompt text
             "input_rule":     "#FF6600",          # orange rule under input
-            "response_border": "#9984E3",         # lavender border wraps responses
+            "response_border": "#7FA6E8",         # light blue border wraps responses
             "status_bar_bg":  "#000000",          # true black status bar
             "status_bar_text": "#FFFFFF",         # white text
             "status_bar_strong": "#FFCC00",       # golden highlights
-            "status_bar_dim":  "#9933CC",         # purple dim info
-            "status_bar_good": "#66FF00",         # lime good
+            "status_bar_dim":  "#7FA6E8",         # light blue dim info
+            "status_bar_good": "#88EE7A",         # soft light green = good
             "status_bar_warn": "#FF6600",         # orange warn
             "status_bar_bad":  "#FF6767",         # red bad
             "status_bar_critical": "#FF2EFF",     # console magenta — critical alert
             "session_label":   "#44B4CC",         # cyan session markers
-            "session_border":  "#333300",         # caret-row dark yellow-green
-            "selection_bg":    "#2E3F34",         # selection green from theme
+            "session_border":  "#000000",         # pure black — no tint
+            "selection_bg":    "#000000",         # pure black — no tint
             "completion_menu_bg":          "#000000",
-            "completion_menu_current_bg":  "#2E3F34",
+            "completion_menu_current_bg":  "#111111",
             "completion_menu_meta_bg":     "#000000",
-            "completion_menu_meta_current_bg": "#2E3F34",
+            "completion_menu_meta_current_bg": "#111111",
             "voice_status_bg": "#000000",
         },
         "spinner": {
