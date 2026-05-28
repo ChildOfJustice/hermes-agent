@@ -14648,44 +14648,24 @@ class GatewayRunner:
                             adapter = a
                             break
                     if adapter and source.chat_id:
-                        # Optimisation: successful completions (exit code 0) do NOT need a
-                        # full LLM turn — the agent has nothing to react to. Send a compact
-                        # silent notification directly and skip the LLM call entirely.
-                        # Failures (non-zero exit) still go through the full agent path so
-                        # the LLM can diagnose the error and respond.
-                        _is_success = session.exit_code in (0, None)
-                        if _is_success:
-                            try:
-                                _send_meta = {"thread_id": thread_id} if thread_id else None
-                                _ok_text = f"✓ `{session.command[:80]}` finished (exit 0)"
-                                await adapter.send(source.chat_id, _ok_text, metadata=_send_meta)
-                                logger.info(
-                                    "Process %s finished successfully — skipping LLM, sent compact notice to chat=%s",
-                                    session_id,
-                                    source.chat_id,
-                                )
-                            except Exception as e:
-                                logger.error("Agent notify (success) send error: %s", e)
-                        else:
-                            try:
-                                synth_event = MessageEvent(
-                                    text=synth_text,
-                                    message_type=MessageType.TEXT,
-                                    source=source,
-                                    internal=True,
-                                    message_id=message_id,
-                                )
-                                logger.info(
-                                    "Process %s FAILED (exit %s) — injecting agent notification for session %s chat=%s thread=%s",
-                                    session_id,
-                                    session.exit_code,
-                                    session_key,
-                                    source.chat_id,
-                                    source.thread_id,
-                                )
-                                await adapter.handle_message(synth_event)
-                            except Exception as e:
-                                logger.error("Agent notify injection error: %s", e)
+                        try:
+                            synth_event = MessageEvent(
+                                text=synth_text,
+                                message_type=MessageType.TEXT,
+                                source=source,
+                                internal=True,
+                                message_id=message_id,
+                            )
+                            logger.info(
+                                "Process %s finished — injecting agent notification for session %s chat=%s thread=%s",
+                                session_id,
+                                session_key,
+                                source.chat_id,
+                                source.thread_id,
+                            )
+                            await adapter.handle_message(synth_event)
+                        except Exception as e:
+                            logger.error("Agent notify injection error: %s", e)
                     break
 
                 # --- Normal text-only notification ---
