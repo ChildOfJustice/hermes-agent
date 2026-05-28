@@ -3794,6 +3794,11 @@ class HermesCLI:
                 plain_text = "".join(text for _, text in frags)
                 trimmed = self._trim_status_bar_text(plain_text, width)
                 return [("class:status-bar", trimmed)]
+            # Pad to full terminal width so the status-bar background colour
+            # fills the entire row instead of stopping after the last fragment.
+            padding = width - total_width
+            if padding > 0:
+                frags.append(("class:status-bar", " " * padding))
             return frags
         except Exception:
             return [("class:status-bar", f" {self._build_status_bar_text()} ")]
