@@ -733,7 +733,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "ui_warn":        "#FFCC00",          # golden warn
             "prompt":         "#AECBF5",          # soft blue-white prompt
             "input_rule":     "#FF6600",          # orange rule under input
-            "response_border": "#7FA6E8",         # light blue border wraps responses
+            "response_border": "#CC44FF",         # electric purple border wraps responses
             "response_text":   "#AECBF5",         # slightly darker than border, pale blue for body text
             "status_bar_bg":  "#000000",          # true black status bar
             "terminal_bg":    "#000000",          # OSC 11 — paint whole terminal canvas black
