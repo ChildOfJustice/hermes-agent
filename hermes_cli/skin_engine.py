@@ -706,6 +706,78 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
 [#F29C38]⠀⠀⠀⠀⠀⠀⠀⣼⡟⠀⠀⢻⣧⠀⠀⠀⠀⠀⠀⠀⠀[/]
 [dim #7A3511]⠀⠀⠀⠀⠀⠀⠀tail flame lit⠀⠀⠀⠀⠀⠀⠀⠀[/]""",
     },
+    "vibrantink": {
+        "name": "vibrantink",
+        "description": "VibrantInk2.0 — pure black canvas, electric lime/orange/purple accent palette",
+        "colors": {
+            # Based on VibrantInk2.0 IntelliJ theme by the user.
+            # Core palette:
+            #   background: #000000 (pure black)
+            #   keyword / accent: #FF6600 (electric orange)
+            #   strings / ok:     #66FF00 (electric lime green)
+            #   comments:         #9933CC (purple)
+            #   numbers / entity: #339999 (muted teal)
+            #   class names:      #FFCC00 (golden yellow)
+            #   identifiers:      #9984E3 (lavender purple)
+            #   default text:     #FFFFFF (white)
+            #   regex / cyan:     #44B4CC (bright cyan)
+            "banner_border":  "#FF6600",          # keyword orange — punchy frame
+            "banner_title":   "#FFCC00",          # golden yellow — title pops on black
+            "banner_accent":  "#66FF00",          # electric lime — accent hit
+            "banner_dim":     "#9933CC",          # purple — subdued dividers
+            "banner_text":    "#FFFFFF",          # pure white text
+            "ui_accent":      "#FF6600",          # orange drives interactive cues
+            "ui_label":       "#44B4CC",          # cyan labels — readable on black
+            "ui_ok":          "#66FF00",          # lime = success
+            "ui_error":       "#FF6767",          # console red from theme
+            "ui_warn":        "#FFCC00",          # golden warn
+            "prompt":         "#FFFFFF",          # white prompt text
+            "input_rule":     "#FF6600",          # orange rule under input
+            "response_border": "#9984E3",         # lavender border wraps responses
+            "status_bar_bg":  "#000000",          # true black status bar
+            "status_bar_text": "#FFFFFF",         # white text
+            "status_bar_strong": "#FFCC00",       # golden highlights
+            "status_bar_dim":  "#9933CC",         # purple dim info
+            "status_bar_good": "#66FF00",         # lime good
+            "status_bar_warn": "#FF6600",         # orange warn
+            "status_bar_bad":  "#FF6767",         # red bad
+            "status_bar_critical": "#FF2EFF",     # console magenta — critical alert
+            "session_label":   "#44B4CC",         # cyan session markers
+            "session_border":  "#333300",         # caret-row dark yellow-green
+            "selection_bg":    "#2E3F34",         # selection green from theme
+            "completion_menu_bg":          "#000000",
+            "completion_menu_current_bg":  "#2E3F34",
+            "completion_menu_meta_bg":     "#000000",
+            "completion_menu_meta_current_bg": "#2E3F34",
+            "voice_status_bg": "#000000",
+        },
+        "spinner": {
+            # Glitch-code aesthetic — cycling through syntax-token characters
+            # that mirror VibrantInk's colour role: orange keyword, lime string,
+            # purple comment, cyan regex.
+            "waiting_faces": ["◈ ink", "◉ ink", "◈ ink"],
+            "thinking_faces": ["⟨░▓░⟩", "⟨▓░▓⟩", "⟨░▓░⟩"],
+            "thinking_verbs": [
+                "parsing", "compiling", "lexing",
+                "tokenizing", "resolving", "rendering",
+                "scanning", "matching", "inferring",
+            ],
+            "wings": [
+                ["⟨◈", "◈⟩"],
+                ["⟨◉", "◉⟩"],
+                ["⟨░", "░⟩"],
+            ],
+        },
+        "branding": {
+            "agent_name": "Hermes Agent",
+            "welcome": "Welcome to Hermes Agent (vibrantink). Type your message or /help for commands.",
+            "goodbye": "Ink dry.  ◈",
+            "response_label": " ◈ Hermes ",
+            "prompt_symbol": "◈",
+            "help_header": "(◈) Available Commands",
+        },
+        "tool_prefix": "┊",
+    },
 }
 
 
