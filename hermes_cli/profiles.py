@@ -751,6 +751,17 @@ def create_profile(
         except Exception:
             pass  # best-effort — don't fail profile creation over this
 
+    # Seed a default MEMORY.md so the agent knows about long-term memory
+    # from the very first session. Skipped if already present (clone path).
+    mem_path = profile_dir / "memories" / "MEMORY.md"
+    if not mem_path.exists():
+        try:
+            from hermes_cli.default_memory import DEFAULT_MEMORY_MD
+            mem_path.parent.mkdir(parents=True, exist_ok=True)
+            mem_path.write_text(DEFAULT_MEMORY_MD, encoding="utf-8")
+        except Exception:
+            pass  # best-effort — don't fail profile creation over this
+
     # Write the opt-out marker so seed_profile_skills() and `hermes update`'s
     # all-profile sync loop both skip this profile for bundled-skill seeding.
     if no_skills:

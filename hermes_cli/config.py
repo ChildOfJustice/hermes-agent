@@ -148,6 +148,7 @@ import yaml
 
 from hermes_cli.colors import Colors, color
 from hermes_cli.default_soul import DEFAULT_SOUL_MD
+from hermes_cli.default_memory import DEFAULT_MEMORY_MD
 
 
 # =============================================================================
@@ -447,6 +448,25 @@ def _ensure_default_soul_md(home: Path) -> None:
     _secure_file(soul_path)
 
 
+def _ensure_default_memory_md(home: Path) -> None:
+    """Seed a default MEMORY.md into HERMES_HOME/memories/ if not present yet.
+
+    Teaches the agent about the two-layer memory system (built-in tool + MemPalace)
+    from the very first session so it uses long-term memory correctly without
+    having to discover the architecture by accident.
+    Skipped if MEMORY.md already exists — never overwrites user content.
+    """
+    mem_path = home / "memories" / "MEMORY.md"
+    if mem_path.exists():
+        return
+    try:
+        mem_path.parent.mkdir(parents=True, exist_ok=True)
+        mem_path.write_text(DEFAULT_MEMORY_MD, encoding="utf-8")
+        _secure_file(mem_path)
+    except Exception:
+        pass  # best-effort — don't fail startup over this
+
+
 def ensure_hermes_home():
     """Ensure ~/.hermes directory structure exists with secure permissions.
 
@@ -472,6 +492,7 @@ def ensure_hermes_home():
             d.mkdir(parents=True, exist_ok=True)
             _secure_dir(d)
         _ensure_default_soul_md(home)
+        _ensure_default_memory_md(home)
 
 
 def _ensure_hermes_home_managed(home: Path):
@@ -492,8 +513,9 @@ def _ensure_hermes_home_managed(home: Path):
     # In managed mode the activation script may not know about this subdir,
     # so we mkdir it ourselves (it's inside an already-secured logs/ dir).
     (home / "logs" / "curator").mkdir(parents=True, exist_ok=True)
-    # Inside umask(0o007) scope — SOUL.md will be created as 0660
+    # Inside umask(0o007) scope — SOUL.md and MEMORY.md will be created as 0660
     _ensure_default_soul_md(home)
+    _ensure_default_memory_md(home)
 
 
 # =============================================================================
