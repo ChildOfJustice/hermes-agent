@@ -1658,7 +1658,7 @@ def _foreground_background_guidance(command: str) -> str | None:
 
 def _resolve_notification_flag_conflict(
     *,
-    notify_on_complete: bool,
+    notify_on_complete,
     watch_patterns,
     background: bool,
 ) -> tuple:
@@ -1676,7 +1676,7 @@ def _resolve_notification_flag_conflict(
     """
     if background and notify_on_complete and watch_patterns:
         note = (
-            "watch_patterns ignored because notify_on_complete=True; "
+            "watch_patterns ignored because notify_on_complete is set; "
             "these two flags produce duplicate notifications when combined"
         )
         return None, note
@@ -1691,7 +1691,7 @@ def terminal_tool(
     force: bool = False,
     workdir: Optional[str] = None,
     pty: bool = False,
-    notify_on_complete: bool = False,
+    notify_on_complete=False,
     watch_patterns: Optional[List[str]] = None,
 ) -> str:
     """
@@ -1705,7 +1705,7 @@ def terminal_tool(
         force: If True, skip dangerous command check (use after user confirms)
         workdir: Working directory for this command (optional, uses session cwd if not set)
         pty: If True, use pseudo-terminal for interactive CLI tools (local backend only)
-        notify_on_complete: If True and background=True, you'll be notified exactly once when the process exits. The right choice for almost every long task. MUTUALLY EXCLUSIVE with watch_patterns.
+        notify_on_complete: Controls completion notification when background=True. "agent" or True — wake the LLM with full output so it can react (use when outcome drives next steps). "silent" — compact user notice, no LLM call (use for fire-and-forget tasks). MUTUALLY EXCLUSIVE with watch_patterns.
         watch_patterns: List of strings to watch for in background output. HARD rate limit: 1 notification per 15s per process. After 3 strike windows in a row, watch_patterns is disabled and the session is auto-promoted to notify_on_complete. Use ONLY for rare, one-shot mid-process signals on long-lived processes (server readiness, migration-done markers). NEVER use in loops/batch jobs — error patterns there will hit the strike limit and get disabled. MUTUALLY EXCLUSIVE with notify_on_complete — set one, not both.
 
     Returns:
@@ -2023,8 +2023,16 @@ def terminal_tool(
 
                 # Mark for agent notification on completion
                 if notify_on_complete and background:
-                    proc_session.notify_on_complete = True
-                    result_data["notify_on_complete"] = True
+                    # Normalise: True / "true" / "agent" / "1" -> "agent";
+                    # "silent" -> "silent"; anything unknown -> "agent" (safe default).
+                    _raw_noc = notify_on_complete
+                    if isinstance(_raw_noc, str):
+                        _noc_s = _raw_noc.strip().lower()
+                        _noc_mode = "silent" if _noc_s == "silent" else "agent"
+                    else:
+                        _noc_mode = "agent"  # bool True -> "agent"
+                    proc_session.notify_on_complete = _noc_mode
+                    result_data["notify_on_complete"] = _noc_mode
 
                     # In gateway mode, auto-register a fast watcher so the
                     # gateway can detect completion and trigger a new agent
@@ -2041,7 +2049,7 @@ def terminal_tool(
                             "user_name": proc_session.watcher_user_name,
                             "thread_id": proc_session.watcher_thread_id,
                             "message_id": proc_session.watcher_message_id,
-                            "notify_on_complete": True,
+                            "notify_on_complete": _noc_mode,
                         })
 
                 # Set watch patterns for output monitoring
@@ -2367,9 +2375,17 @@ TERMINAL_SCHEMA = {
                 "default": False
             },
             "notify_on_complete": {
-                "type": "boolean",
-                "description": "When true (and background=true), you'll be automatically notified exactly once when the process finishes. **This is the right choice for almost every long-running task** — tests, builds, deployments, multi-item batch jobs, anything that takes over a minute and has a defined end. Use this and keep working on other things; the system notifies you on exit. MUTUALLY EXCLUSIVE with watch_patterns — when both are set, watch_patterns is dropped.",
-                "default": False
+                "type": "string",
+                "enum": ["agent", "silent"],
+                "description": (
+                    "Completion notification mode when background=true. "
+                    "\"agent\" (default, use for most tasks) — process output is injected back so you can react; "
+                    "use whenever the outcome drives your next step (tests, builds, deployments, multi-step plans). "
+                    "\"silent\" — sends a compact one-liner to the user ('✓ command finished (exit 0)') WITHOUT an LLM call; "
+                    "use for pure fire-and-forget tasks where you already know what to do next regardless of output. "
+                    "MUTUALLY EXCLUSIVE with watch_patterns — when both are set, watch_patterns is dropped."
+                ),
+                "default": "agent"
             },
             "watch_patterns": {
                 "type": "array",

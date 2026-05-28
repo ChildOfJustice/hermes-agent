@@ -284,12 +284,9 @@ async def test_inject_watch_notification_routes_from_session_store_origin(monkey
 
 
 @pytest.mark.asyncio
-async def test_agent_notification_carries_message_id_reply_anchor(monkeypatch, tmp_path):
-    """notify_on_complete injection carries the triggering message_id so the
-    synthetic event can be reply-anchored back into a Telegram DM topic.
-
-    Without an anchor, Telegram private-chat topic sends fall back to the main
-    chat (see _thread_kwargs_for_send / telegram_dm_topic_reply_fallback)."""
+async def test_agent_notify_mode_carries_message_id_reply_anchor(monkeypatch, tmp_path):
+    """notify_on_complete="agent" injects synthetic message with the triggering
+    message_id so the event can be reply-anchored in a Telegram DM topic."""
     import tools.process_registry as pr_module
 
     sessions = [SimpleNamespace(
@@ -312,7 +309,7 @@ async def test_agent_notification_carries_message_id_reply_anchor(monkeypatch, t
         "chat_id": "123",
         "thread_id": "24296",
         "message_id": "555",
-        "notify_on_complete": True,
+        "notify_on_complete": "agent",
     }
     await runner._run_process_watcher(watcher)
 
@@ -324,9 +321,9 @@ async def test_agent_notification_carries_message_id_reply_anchor(monkeypatch, t
 
 
 @pytest.mark.asyncio
-async def test_agent_notification_no_message_id_is_tolerated(monkeypatch, tmp_path):
-    """A watcher dict without message_id (CLI spawn, pre-upgrade checkpoint)
-    still injects — message_id is simply None."""
+async def test_legacy_bool_true_treated_as_agent_mode(monkeypatch, tmp_path):
+    """Legacy watcher dicts with notify_on_complete=True (bool) are backward-
+    compatible and still inject the LLM notification (treated as 'agent')."""
     import tools.process_registry as pr_module
 
     sessions = [SimpleNamespace(
@@ -342,19 +339,100 @@ async def test_agent_notification_no_message_id_is_tolerated(monkeypatch, tmp_pa
     adapter = runner.adapters[Platform.TELEGRAM]
 
     watcher = {
-        "session_id": "proc_anchorless",
+        "session_id": "proc_legacy",
         "check_interval": 0,
         "session_key": "agent:main:telegram:dm:123:24296",
         "platform": "telegram",
         "chat_id": "123",
         "thread_id": "24296",
-        "notify_on_complete": True,
+        "notify_on_complete": True,  # legacy bool
     }
     await runner._run_process_watcher(watcher)
 
+    # bool True must normalise to "agent" — LLM injection fires.
     adapter.handle_message.assert_awaited_once()
     synth_event = adapter.handle_message.await_args.args[0]
+    assert synth_event.internal is True
     assert synth_event.message_id is None
+
+
+@pytest.mark.asyncio
+async def test_silent_mode_skips_llm_sends_compact_notice(monkeypatch, tmp_path):
+    """notify_on_complete="silent" must NOT call handle_message. Instead a
+    compact one-liner is sent directly via adapter.send() — no LLM call,
+    no context tokens consumed."""
+    import tools.process_registry as pr_module
+
+    sessions = [SimpleNamespace(
+        output_buffer="Build done\n", exited=True, exit_code=0, command="./gradlew build",
+    )]
+    monkeypatch.setattr(pr_module, "process_registry", _FakeRegistry(sessions))
+
+    async def _instant_sleep(*_a, **_kw):
+        pass
+    monkeypatch.setattr(asyncio, "sleep", _instant_sleep)
+
+    runner = _build_runner(monkeypatch, tmp_path, "all")
+    adapter = runner.adapters[Platform.TELEGRAM]
+
+    watcher = {
+        "session_id": "proc_silent",
+        "check_interval": 0,
+        "session_key": "agent:main:telegram:dm:123:24296",
+        "platform": "telegram",
+        "chat_id": "123",
+        "thread_id": "24296",
+        "message_id": "777",
+        "notify_on_complete": "silent",
+    }
+    await runner._run_process_watcher(watcher)
+
+    # Silent: no LLM injection.
+    adapter.handle_message.assert_not_awaited()
+    # Compact notice sent directly.
+    adapter.send.assert_awaited_once()
+    _chat_id, _text = adapter.send.await_args.args
+    assert _chat_id == "123"
+    assert "./gradlew build" in _text
+    assert "exit 0" in _text or "✓" in _text
+    # thread_id forwarded in metadata.
+    _, _kwargs = adapter.send.call_args
+    assert _kwargs.get("metadata") == {"thread_id": "24296"}
+
+
+@pytest.mark.asyncio
+async def test_silent_mode_failed_process_sends_failure_notice(monkeypatch, tmp_path):
+    """notify_on_complete="silent" with a failed process still sends a compact
+    failure notice (✗) without an LLM call."""
+    import tools.process_registry as pr_module
+
+    sessions = [SimpleNamespace(
+        output_buffer="FATAL: error\n", exited=True, exit_code=1,
+        command="./gradlew build",
+    )]
+    monkeypatch.setattr(pr_module, "process_registry", _FakeRegistry(sessions))
+
+    async def _instant_sleep(*_a, **_kw):
+        pass
+    monkeypatch.setattr(asyncio, "sleep", _instant_sleep)
+
+    runner = _build_runner(monkeypatch, tmp_path, "all")
+    adapter = runner.adapters[Platform.TELEGRAM]
+
+    watcher = {
+        "session_id": "proc_silent_fail",
+        "check_interval": 0,
+        "session_key": "agent:main:telegram:dm:123:0",
+        "platform": "telegram",
+        "chat_id": "123",
+        "notify_on_complete": "silent",
+    }
+    await runner._run_process_watcher(watcher)
+
+    adapter.handle_message.assert_not_awaited()
+    adapter.send.assert_awaited_once()
+    _chat_id, _text = adapter.send.await_args.args
+    assert "exit 1" in _text or "✗" in _text
 
 
 @pytest.mark.asyncio

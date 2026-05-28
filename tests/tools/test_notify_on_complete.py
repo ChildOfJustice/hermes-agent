@@ -57,11 +57,15 @@ def _make_session(
 class TestProcessSessionField:
     def test_default_false(self):
         s = ProcessSession(id="proc_1", command="echo hi")
-        assert s.notify_on_complete is False
+        assert s.notify_on_complete == ""
 
-    def test_set_true(self):
-        s = ProcessSession(id="proc_1", command="echo hi", notify_on_complete=True)
-        assert s.notify_on_complete is True
+    def test_set_agent(self):
+        s = ProcessSession(id="proc_1", command="echo hi", notify_on_complete="agent")
+        assert s.notify_on_complete == "agent"
+
+    def test_set_silent(self):
+        s = ProcessSession(id="proc_1", command="echo hi", notify_on_complete="silent")
+        assert s.notify_on_complete == "silent"
 
 
 # =========================================================================
@@ -86,7 +90,7 @@ class TestCompletionQueue:
     def test_move_to_finished_with_notify(self, registry):
         """Processes with notify_on_complete push to queue."""
         s = _make_session(
-            notify_on_complete=True,
+            notify_on_complete="agent",
             output="build succeeded",
             exit_code=0,
         )
@@ -106,7 +110,7 @@ class TestCompletionQueue:
     def test_move_to_finished_nonzero_exit(self, registry):
         """Nonzero exit codes are captured correctly."""
         s = _make_session(
-            notify_on_complete=True,
+            notify_on_complete="agent",
             output="FAILED",
             exit_code=1,
         )
@@ -127,7 +131,7 @@ class TestCompletionQueue:
         _move_to_finished() for the same session, producing duplicate
         [SYSTEM: Background process ...] messages.
         """
-        s = _make_session(notify_on_complete=True, output="done", exit_code=-15)
+        s = _make_session(notify_on_complete="agent", output="done", exit_code=-15)
         s.exited = True
         s.exit_code = -15
         registry._running[s.id] = s
@@ -144,7 +148,7 @@ class TestCompletionQueue:
         """Long output is truncated to last 2000 chars."""
         long_output = "x" * 5000
         s = _make_session(
-            notify_on_complete=True,
+            notify_on_complete="agent",
             output=long_output,
         )
         s.exited = True
@@ -161,7 +165,7 @@ class TestCompletionQueue:
         for i in range(3):
             s = _make_session(
                 sid=f"proc_{i}",
-                notify_on_complete=True,
+                notify_on_complete="agent",
                 output=f"output_{i}",
             )
             s.exited = True
@@ -185,13 +189,13 @@ class TestCompletionQueue:
 class TestCheckpointNotify:
     def test_checkpoint_includes_notify(self, registry, tmp_path):
         with patch("tools.process_registry.CHECKPOINT_PATH", tmp_path / "procs.json"):
-            s = _make_session(notify_on_complete=True)
+            s = _make_session(notify_on_complete="agent")
             registry._running[s.id] = s
             registry._write_checkpoint()
 
             data = json.loads((tmp_path / "procs.json").read_text())
             assert len(data) == 1
-            assert data[0]["notify_on_complete"] is True
+            assert data[0]["notify_on_complete"] == "agent"
 
     def test_checkpoint_without_notify(self, registry, tmp_path):
         with patch("tools.process_registry.CHECKPOINT_PATH", tmp_path / "procs.json"):
@@ -200,7 +204,7 @@ class TestCheckpointNotify:
             registry._write_checkpoint()
 
             data = json.loads((tmp_path / "procs.json").read_text())
-            assert data[0]["notify_on_complete"] is False
+            assert not data[0]["notify_on_complete"]  # falsy: False or ""
 
     def test_recover_preserves_notify(self, registry, tmp_path):
         checkpoint = tmp_path / "procs.json"
@@ -209,13 +213,13 @@ class TestCheckpointNotify:
             "command": "sleep 999",
             "pid": os.getpid(),
             "task_id": "t1",
-            "notify_on_complete": True,
+            "notify_on_complete": "agent",
         }]))
         with patch("tools.process_registry.CHECKPOINT_PATH", checkpoint):
             recovered = registry.recover_from_checkpoint()
             assert recovered == 1
             s = registry.get("proc_live")
-            assert s.notify_on_complete is True
+            assert s.notify_on_complete == "agent"
 
     def test_recover_requeues_notify_watchers(self, registry, tmp_path):
         checkpoint = tmp_path / "procs.json"
@@ -231,13 +235,13 @@ class TestCheckpointNotify:
             "watcher_user_name": "alice",
             "watcher_thread_id": "42",
             "watcher_interval": 5,
-            "notify_on_complete": True,
+            "notify_on_complete": "agent",
         }]))
         with patch("tools.process_registry.CHECKPOINT_PATH", checkpoint):
             recovered = registry.recover_from_checkpoint()
             assert recovered == 1
             assert len(registry.pending_watchers) == 1
-            assert registry.pending_watchers[0]["notify_on_complete"] is True
+            assert registry.pending_watchers[0]["notify_on_complete"] == "agent"
             assert registry.pending_watchers[0]["user_id"] == "u123"
             assert registry.pending_watchers[0]["user_name"] == "alice"
 
@@ -254,7 +258,7 @@ class TestCheckpointNotify:
             recovered = registry.recover_from_checkpoint()
             assert recovered == 1
             s = registry.get("proc_live")
-            assert s.notify_on_complete is False
+            assert not s.notify_on_complete  # old checkpoint missing field -> falsy
 
 
 # =========================================================================
@@ -266,8 +270,10 @@ class TestTerminalSchema:
         from tools.terminal_tool import TERMINAL_SCHEMA
         props = TERMINAL_SCHEMA["parameters"]["properties"]
         assert "notify_on_complete" in props
-        assert props["notify_on_complete"]["type"] == "boolean"
-        assert props["notify_on_complete"]["default"] is False
+        assert props["notify_on_complete"]["type"] == "string"
+        assert "agent" in props["notify_on_complete"]["enum"]
+        assert "silent" in props["notify_on_complete"]["enum"]
+        assert props["notify_on_complete"]["default"] == "agent"
 
     def test_handler_passes_notify(self):
         """_handle_terminal passes notify_on_complete to terminal_tool."""
@@ -300,7 +306,7 @@ class TestCompletionConsumed:
 
     def test_wait_marks_completion_consumed(self, registry):
         """wait() returning exited status marks session as consumed."""
-        s = _make_session(sid="proc_wait", notify_on_complete=True, output="done")
+        s = _make_session(sid="proc_wait", notify_on_complete="agent", output="done")
         s.exited = True
         s.exit_code = 0
         registry._running[s.id] = s
@@ -320,7 +326,7 @@ class TestCompletionConsumed:
 
     def test_poll_marks_completion_consumed(self, registry):
         """poll() returning exited status marks session as consumed."""
-        s = _make_session(sid="proc_poll", notify_on_complete=True, output="done")
+        s = _make_session(sid="proc_poll", notify_on_complete="agent", output="done")
         s.exited = True
         s.exit_code = 0
         registry._finished[s.id] = s
@@ -331,7 +337,7 @@ class TestCompletionConsumed:
 
     def test_log_marks_completion_consumed(self, registry):
         """read_log() on exited session marks as consumed."""
-        s = _make_session(sid="proc_log", notify_on_complete=True, output="line1\nline2")
+        s = _make_session(sid="proc_log", notify_on_complete="agent", output="line1\nline2")
         s.exited = True
         s.exit_code = 0
         registry._finished[s.id] = s
@@ -342,7 +348,7 @@ class TestCompletionConsumed:
 
     def test_running_process_not_consumed(self, registry):
         """poll() on a still-running process does not mark as consumed."""
-        s = _make_session(sid="proc_running", notify_on_complete=True, output="partial")
+        s = _make_session(sid="proc_running", notify_on_complete="agent", output="partial")
         registry._running[s.id] = s
 
         result = registry.poll("proc_running")

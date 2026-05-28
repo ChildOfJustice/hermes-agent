@@ -14572,13 +14572,22 @@ class GatewayRunner:
         user_id = watcher.get("user_id", "")
         user_name = watcher.get("user_name", "")
         message_id = str(watcher.get("message_id") or "").strip() or None
-        agent_notify = watcher.get("notify_on_complete", False)
+        _noc_raw = watcher.get("notify_on_complete", False)
+        # Normalise legacy True (bool) to "agent" so older checkpoint dicts work.
+        if _noc_raw is True or _noc_raw == "true":
+            agent_notify = "agent"
+        elif isinstance(_noc_raw, str) and _noc_raw.strip().lower() == "silent":
+            agent_notify = "silent"
+        elif _noc_raw:
+            agent_notify = "agent"  # unknown truthy string -> safe default
+        else:
+            agent_notify = ""
         notify_mode = self._load_background_notifications_mode()
 
         logger.debug("Process watcher started: %s (every %ss, notify=%s, agent_notify=%s)",
                       session_id, interval, notify_mode, agent_notify)
 
-        if notify_mode == "off" and not agent_notify:
+        if notify_mode == "off" and not agent_notify:  # agent_notify is "" or falsy
             # Still wait for the process to exit so we can log it, but don't
             # push any messages to the user.
             while True:
@@ -14648,24 +14657,46 @@ class GatewayRunner:
                             adapter = a
                             break
                     if adapter and source.chat_id:
-                        try:
-                            synth_event = MessageEvent(
-                                text=synth_text,
-                                message_type=MessageType.TEXT,
-                                source=source,
-                                internal=True,
-                                message_id=message_id,
-                            )
-                            logger.info(
-                                "Process %s finished — injecting agent notification for session %s chat=%s thread=%s",
-                                session_id,
-                                session_key,
-                                source.chat_id,
-                                source.thread_id,
-                            )
-                            await adapter.handle_message(synth_event)
-                        except Exception as e:
-                            logger.error("Agent notify injection error: %s", e)
+                        if agent_notify == "silent":
+                            # "silent" mode: the LLM explicitly opted out of seeing
+                            # this output. Send a compact one-liner directly —
+                            # no LLM call, no context tokens consumed.
+                            try:
+                                _cmd_preview = (session.command or "")[:80]
+                                _silent_text = (
+                                    f"✓ `{_cmd_preview}` finished (exit {session.exit_code})"
+                                    if session.exit_code == 0
+                                    else f"✗ `{_cmd_preview}` failed (exit {session.exit_code})"
+                                )
+                                _send_meta = {"thread_id": thread_id} if thread_id else None
+                                await adapter.send(source.chat_id, _silent_text, metadata=_send_meta)
+                                logger.info(
+                                    "Process %s finished (silent mode) — compact notice sent to chat=%s, no LLM call",
+                                    session_id, source.chat_id,
+                                )
+                            except Exception as e:
+                                logger.error("Agent notify (silent) send error: %s", e)
+                        else:
+                            # "agent" mode (default): inject synthetic message so the
+                            # LLM receives the full output and can react.
+                            try:
+                                synth_event = MessageEvent(
+                                    text=synth_text,
+                                    message_type=MessageType.TEXT,
+                                    source=source,
+                                    internal=True,
+                                    message_id=message_id,
+                                )
+                                logger.info(
+                                    "Process %s finished — injecting agent notification for session %s chat=%s thread=%s",
+                                    session_id,
+                                    session_key,
+                                    source.chat_id,
+                                    source.thread_id,
+                                )
+                                await adapter.handle_message(synth_event)
+                            except Exception as e:
+                                logger.error("Agent notify injection error: %s", e)
                     break
 
                 # --- Normal text-only notification ---

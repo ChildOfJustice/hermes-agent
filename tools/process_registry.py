@@ -112,7 +112,7 @@ class ProcessSession:
     watcher_thread_id: str = ""
     watcher_message_id: str = ""                # Triggering message id — reply anchor for topic routing
     watcher_interval: int = 0                   # 0 = no watcher configured
-    notify_on_complete: bool = False             # Queue agent notification on exit
+    notify_on_complete: str = ""                 # Completion notification mode: "agent" (inject to LLM), "silent" (compact send, no LLM), "" (off)
     # Watch patterns — trigger agent notification when output matches any pattern
     watch_patterns: List[str] = field(default_factory=list)
     _watch_hits: int = field(default=0, repr=False)          # total matches delivered
@@ -241,7 +241,7 @@ class ProcessRegistry:
                         session._watch_disabled = True
                         # Promote to notify_on_complete so the agent still gets
                         # exactly one notification when the process actually ends.
-                        session.notify_on_complete = True
+                        session.notify_on_complete = "agent"
                         should_disable = True
                 return_early = True
             else:
@@ -1386,7 +1386,10 @@ class ProcessRegistry:
                     watcher_thread_id=entry.get("watcher_thread_id", ""),
                     watcher_message_id=entry.get("watcher_message_id", ""),
                     watcher_interval=entry.get("watcher_interval", 0),
-                    notify_on_complete=entry.get("notify_on_complete", False),
+                    notify_on_complete=(
+                        # Coerce legacy bool True -> "agent", False/missing -> ""
+                        lambda v: "agent" if v is True else ("silent" if v == "silent" else ("agent" if v == "agent" else ""))
+                    )(entry.get("notify_on_complete", "")),
                     watch_patterns=entry.get("watch_patterns", []),
                 )
                 with self._lock:
