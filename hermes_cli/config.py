@@ -242,6 +242,18 @@ def stamp_install_method(method: str) -> None:
         pass
 
 
+def _get_local_workspace() -> Optional[str]:
+    """Return the workspace path stored by install-local.sh, or None."""
+    marker = get_hermes_home() / ".local_workspace"
+    try:
+        path = marker.read_text(encoding="utf-8").strip()
+        if path:
+            return path
+    except OSError:
+        pass
+    return None
+
+
 def recommended_update_command_for_method(method: str) -> str:
     """Return the update command or guidance for a given install method."""
     if method == "nixos":
@@ -250,6 +262,11 @@ def recommended_update_command_for_method(method: str) -> str:
         return "brew upgrade hermes-agent"
     if method == "docker":
         return "docker pull nousresearch/hermes-agent:latest"
+    if method == "local-workspace":
+        workspace = _get_local_workspace()
+        if workspace:
+            return f"bash {workspace}/scripts/install-local.sh"
+        return "bash <citadel-strexis>/scripts/install-local.sh"
     if method == "pip":
         import shutil
         uv = shutil.which("uv")

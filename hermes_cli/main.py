@@ -8597,6 +8597,44 @@ def _cmd_update_impl(args, gateway_mode: bool):
     print("⚕ Updating Hermes Agent...")
     print()
 
+    # Local-workspace installs (citadel-strexis install-local.sh) are upgraded
+    # by re-running the install script, not by git-pulling the upstream repo.
+    # Check for this early so we never accidentally pull from NousResearch.
+    from hermes_cli.config import detect_install_method, _get_local_workspace, recommended_update_command_for_method
+    _early_method = detect_install_method()
+    if _early_method == "local-workspace":
+        workspace = _get_local_workspace()
+        upgrade_cmd = recommended_update_command_for_method("local-workspace")
+        print("ℹ This is a local-workspace install (citadel-strexis).")
+        print()
+        print("  To upgrade, pull your submodule changes and re-run the install script:")
+        if workspace:
+            print(f"    cd {workspace}")
+            print(f"    git submodule update --remote --merge")
+        print(f"    {upgrade_cmd}")
+        print()
+        print("  The install script upgrades Python packages, re-copies the mempalace")
+        print("  plugin, rebuilds the web/TUI if needed, and syncs bundled skills")
+        print("  (new skills added, unmodified bundled skills updated, yours kept).")
+        print()
+        # Still run skills sync so `hermes update` at least keeps skills current
+        # if the user has already pulled the submodule manually.
+        try:
+            from tools.skills_sync import sync_skills
+            print("→ Syncing bundled skills (submodule may have new skills)...")
+            result = sync_skills(quiet=True)
+            if result["copied"]:
+                print(f"  + {len(result['copied'])} new: {', '.join(result['copied'])}")
+            if result.get("updated"):
+                print(f"  ↑ {len(result['updated'])} updated: {', '.join(result['updated'])}")
+            if result.get("user_modified"):
+                print(f"  ~ {len(result['user_modified'])} user-modified (kept)")
+            if not result["copied"] and not result.get("updated"):
+                print("  ✓ Skills are already up to date")
+        except Exception as e:
+            logger.debug("Skills sync in local-workspace update failed: %s", e)
+        return
+
     # On Windows, abort early if another hermes.exe is holding the venv shim
     # open. Continuing would result in a string of WinError 32 warnings and
     # then either a deferred-rename leftover or a failed git-pull fast path
