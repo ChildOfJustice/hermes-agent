@@ -126,6 +126,7 @@ class TurnController {
   private activeReasoningText = ''
   private reasoningSegmentIndex: null | number = null
   private activityId = 0
+  private idleTimer: ReturnType<typeof setTimeout> | null = null
   private reasoningStreamingTimer: Timer = null
   private reasoningTimer: Timer = null
   private streamTimer: Timer = null
@@ -178,7 +179,11 @@ class TurnController {
       tools: [],
       turnTrail: []
     })
-    patchUiState({ busy: false })
+    if (this.idleTimer) clearTimeout(this.idleTimer)
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = null
+      patchUiState({ busy: false })
+    }, 400)
     resetFlowOverlays()
   }
 
@@ -767,6 +772,7 @@ class TurnController {
     this.toolTokenAcc = 0
     this.interrupted = false
     this.persistedToolLabels.clear()
+    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null }
     patchUiState({ busy: true })
     patchTurnState({ activity: [], outcome: '', subagents: [], toolTokens: 0, tools: [], turnTrail: [] })
   }

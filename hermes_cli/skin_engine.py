@@ -725,17 +725,18 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "banner_title":   "#FFCC00",          # golden yellow — title pops on black
             "banner_accent":  "#88EE7A",          # soft light green — accent hit
             "banner_dim":     "#7FA6E8",          # light blue — subdued dividers
-            "banner_text":    "#FFFFFF",          # pure white text
+            "banner_text":    "#AECBF5",          # soft blue-white — readable but not stark white
             "ui_accent":      "#FF6600",          # orange drives interactive cues
             "ui_label":       "#44B4CC",          # cyan labels — readable on black
             "ui_ok":          "#88EE7A",          # soft light green = success
             "ui_error":       "#FF6767",          # console red from theme
             "ui_warn":        "#FFCC00",          # golden warn
-            "prompt":         "#FFFFFF",          # white prompt text
+            "prompt":         "#AECBF5",          # soft blue-white prompt
             "input_rule":     "#FF6600",          # orange rule under input
             "response_border": "#7FA6E8",         # light blue border wraps responses
+            "response_text":   "#AECBF5",         # slightly darker than border, pale blue for body text
             "status_bar_bg":  "#000000",          # true black status bar
-            "status_bar_text": "#FFFFFF",         # white text
+            "status_bar_text": "#AECBF5",         # soft blue-white
             "status_bar_strong": "#FFCC00",       # golden highlights
             "status_bar_dim":  "#7FA6E8",         # light blue dim info
             "status_bar_good": "#88EE7A",         # soft light green = good
@@ -755,8 +756,8 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             # Glitch-code aesthetic — cycling through syntax-token characters
             # that mirror VibrantInk's colour role: orange keyword, lime string,
             # purple comment, cyan regex.
-            "waiting_faces": ["◈ ink", "◉ ink", "◈ ink"],
-            "thinking_faces": ["⟨░▓░⟩", "⟨▓░▓⟩", "⟨░▓░⟩"],
+            "waiting_faces": ["👁 ink", "◈ ink", "👁 ink"],
+            "thinking_faces": ["👁⟨░▓░⟩", "◈⟨▓░▓⟩", "👁⟨░▓░⟩"],
             "thinking_verbs": [
                 "parsing", "compiling", "lexing",
                 "tokenizing", "resolving", "rendering",

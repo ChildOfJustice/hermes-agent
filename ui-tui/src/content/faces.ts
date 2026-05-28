@@ -1,13 +1,6 @@
-// Operation-glyph indicator used by the `kaomoji` indicator style in the
-// Hermes TUI.  The classic 顔文字 (kaomoji) set has been replaced with a
-// single mech-style status glyph that reads the same in every frame —
-// keeping the rotation loop API-compatible (length >= 1) while making
-// the indicator feel like a steady operational readout instead of an
-// animated face.
-//
-// Two entries so any modulo arithmetic stays well-defined; the visible
-// glyph is identical between them.
+// VibrantInk TUI indicator — eye glyph cycles with mech-style readout.
+// Two entries so tick % length arithmetic stays well-defined.
 export const FACES = [
-  '_◢🔘◤‾‾',
-  '_◢🔘◤‾‾'
+  '👁 _◢◤‾‾',
+  '◈ _◢◤‾‾'
 ]

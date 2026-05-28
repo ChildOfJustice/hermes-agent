@@ -558,7 +558,7 @@ export function fromSkin(
       sessionLabel: c('session_label') ?? muted,
       sessionBorder: c('session_border') ?? muted,
 
-      statusBg: d.color.statusBg,
+      statusBg: c('status_bar_bg') ?? d.color.statusBg,
       statusFg: d.color.statusFg,
       statusGood: c('ui_ok') ?? d.color.statusGood,
       statusWarn: c('ui_warn') ?? d.color.statusWarn,
