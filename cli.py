@@ -4925,6 +4925,18 @@ class HermesCLI:
 
     def show_banner(self):
         """Display the welcome banner in Claude Code style."""
+        # Set the terminal background color from the skin (OSC 11) so the
+        # whole canvas matches — not just the status-bar row.  This must come
+        # before the console.clear() call so the cleared screen inherits the
+        # new background.
+        try:
+            from hermes_cli.skin_engine import get_terminal_bg
+            _tbg = get_terminal_bg()
+            if _tbg and sys.stdout.isatty():
+                sys.stdout.write(f"\x1b]11;{_tbg}\x1b\\")
+                sys.stdout.flush()
+        except Exception:
+            pass
         self.console.clear()
         ctx_len = None
         if hasattr(self, 'agent') and self.agent and hasattr(self.agent, 'context_compressor'):
@@ -11869,6 +11881,15 @@ class HermesCLI:
                 goodbye = get_active_goodbye("Goodbye! ⚕")
             except Exception:
                 goodbye = "Goodbye! ⚕"
+            # Restore the terminal background to its default before printing
+            # the goodbye so the post-Hermes shell prompt looks normal.
+            try:
+                from hermes_cli.skin_engine import get_terminal_bg as _get_tbg
+                if _get_tbg() and sys.stdout.isatty():
+                    sys.stdout.write("\x1b]111\x1b\\")
+                    sys.stdout.flush()
+            except Exception:
+                pass
             print(goodbye)
 
     def _get_tui_prompt_symbols(self) -> tuple[str, str]:

@@ -736,6 +736,7 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
             "response_border": "#7FA6E8",         # light blue border wraps responses
             "response_text":   "#AECBF5",         # slightly darker than border, pale blue for body text
             "status_bar_bg":  "#000000",          # true black status bar
+            "terminal_bg":    "#000000",          # OSC 11 — paint whole terminal canvas black
             "status_bar_text": "#AECBF5",         # soft blue-white
             "status_bar_strong": "#FFCC00",       # golden highlights
             "status_bar_dim":  "#7FA6E8",         # light blue dim info
@@ -978,6 +979,18 @@ def get_active_goodbye(fallback: str = "Goodbye! ⚕") -> str:
     except Exception:
         return fallback
 
+
+def get_terminal_bg() -> str:
+    """Return the terminal_bg color from the active skin, or '' if not set.
+
+    When non-empty the caller should emit OSC 11 to set the terminal's
+    background color to this value so the whole canvas matches the skin.
+    On exit the caller should emit OSC 111 to restore the terminal default.
+    """
+    try:
+        return get_active_skin().get_color("terminal_bg", "")
+    except Exception:
+        return ""
 
 
 def get_prompt_toolkit_style_overrides() -> Dict[str, str]:
